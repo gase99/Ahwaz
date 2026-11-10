@@ -1,0 +1,23 @@
+{
+  "name": "ahwaz-tgcloud-coding-agent",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Autonomous Telegram Coding Agent & Mini App Code Studio built natively for Telegram Serverless (tgcloud) + Google Gemini",
+  "type": "module",
+  "scripts": {
+    "build": "node miniapp/build.mjs",
+    "deploy": "npm run build && tgcloud push",
+    "push": "tgcloud push",
+    "migrate": "tgcloud migrate",
+    "status": "tgcloud status",
+    "diff": "tgcloud diff",
+    "run": "tgcloud run",
+    "webhook": "tgcloud webhook",
+    "test": "vitest run",
+    "validate:tgcloud": "node scripts/validate-tgcloud.mjs"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "^0.2.0",
+    "vitest": "^5.1.0"
+  }
+}
