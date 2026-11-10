@@ -1,168 +1,214 @@
 import { api } from 'sdk';
 import {
+  fetchLiveOpenCodeFreeModels,
+  getProviderSpec,
+} from '../lib/agent/providers.js';
+import {
   ensureUser,
+  getSetting,
+  resolveProviderAuth,
   setActiveModel,
   setActiveProject,
+  setActiveProviderAndModel,
 } from '../lib/services/auth-service.js';
-import { renderStatusHtml } from '../lib/services/command-service.js';
+import { deliverProjectZip } from '../lib/services/command-service.js';
 import { clearConversationHistory } from '../lib/services/conversation-service.js';
+import { sendSafeText } from '../lib/services/delivery-service.js';
 import {
-  escapeHtml,
-  sendDocumentBytes,
-} from '../lib/services/delivery-service.js';
-import {
-  buildModelSelectorKeyboard,
+  buildMainDashboardKeyboard,
+  buildModelsKeyboard,
   buildProjectsKeyboard,
+  buildProvidersKeyboard,
 } from '../lib/services/keyboard-service.js';
-import {
-  ensureProject,
-  exportProjectZipBytes,
-  listProjects,
-  listWorkspaceFiles,
-  sanitizeProjectName,
-} from '../lib/services/workspace-service.js';
+import { listProjects, listWorkspaceFiles } from '../lib/services/workspace-service.js';
 
-export default async function (callbackQuery) {
-  if (!callbackQuery || !callbackQuery.from) return;
+export default async function handleCallbackQuery(query) {
+  const data = query.data || '';
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
 
-  const queryId = callbackQuery.id;
-  const chatId = callbackQuery.message?.chat?.id;
-  const messageId = callbackQuery.message?.message_id;
-  const data = String(callbackQuery.data ?? '');
-
-  const userRow = await ensureUser(callbackQuery.from);
-  if (!userRow.isAdmin && !userRow.isAllowed) {
-    await api.answerCallbackQuery({
-      callback_query_id: queryId,
-      text: `⛔️ دسترسی غیرمجاز (ID: ${userRow.tgId})`,
-      show_alert: true,
-    });
-    return;
-  }
-
-  if (data === 'cb:files' && chatId) {
-    await api.answerCallbackQuery({ callback_query_id: queryId });
-    const files = await listWorkspaceFiles(userRow.tgId, userRow.activeProject);
-    const body =
-      files.length === 0
-        ? `📂 پروژه <code>${escapeHtml(userRow.activeProject)}</code> فعلاً خالی است.`
-        : `📁 <b>فایل‌های پروژه <code>${escapeHtml(userRow.activeProject)}</code> (${files.length}):</b>\n<pre><code>${escapeHtml(
-            files
-              .map((f) => `${f.path} (${f.sizeBytes} B)`)
-              .join('\n')
-              .slice(0, 3500),
-          )}</code></pre>`;
-    await api.sendMessage({ chat_id: chatId, text: body, parse_mode: 'HTML' });
-    return;
-  }
-
-  if (data === 'cb:zip' && chatId) {
-    const { zipBytes, count } = await exportProjectZipBytes(
-      userRow.tgId,
-      userRow.activeProject,
-    );
-    if (!zipBytes || count === 0) {
+  const answerToast = async (text = '') => {
+    try {
       await api.answerCallbackQuery({
-        callback_query_id: queryId,
-        text: 'پروژه فعلی خالی است!',
-        show_alert: true,
+        callback_query_id: query.id,
+        ...(text ? { text } : {}),
       });
-      return;
+    } catch {
+      // Ignore expired callback query IDs
     }
-    await api.answerCallbackQuery({
-      callback_query_id: queryId,
-      text: 'در حال ارسال فایل ZIP...',
-    });
-    await sendDocumentBytes({
-      chatId,
-      bytes: zipBytes,
-      fileName: `${userRow.activeProject}.zip`,
-      mimeType: 'application/zip',
-      caption: `📦 خروجی پروژه «${userRow.activeProject}» (${count} فایل)`,
-    });
+  };
+
+  if (!query.from || !chatId) {
+    await answerToast();
     return;
   }
 
-  if (data === 'cb:projects' && chatId) {
-    await api.answerCallbackQuery({ callback_query_id: queryId });
+  const userRow = await ensureUser(query.from);
+  if (!userRow.isAllowed) {
+    await answerToast('⛔ حساب شما مجاز نیست.');
+    return;
+  }
+
+  const activeProject = userRow.activeProject || 'default';
+  const activeProvider = userRow.provider || 'opencode';
+  const miniAppUrl = (await getSetting('mini_app_url')) || '';
+
+  const safeEdit = async (text, replyMarkup) => {
+    try {
+      await api.editMessageText({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
+    } catch {
+      await sendSafeText(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : {});
+    }
+  };
+
+  if (data === 'cb:home') {
+    await answerToast();
+    const auth = await resolveProviderAuth(userRow);
+    await safeEdit(
+      `🏠 داشبورد ایجنت کدنویسی اهواز (Telegram Serverless)\n🌐 سرویس فعال: ${auth.providerSpec.shortBadge}\n🧠 مدل فعال: ${auth.model}\n📁 پروژه فعال: ${activeProject}`,
+      buildMainDashboardKeyboard(miniAppUrl),
+    );
+    return;
+  }
+
+  if (data === 'cb:providers') {
+    await answerToast();
+    await safeEdit(
+      `🌐 سرویس هوش مصنوعی مورد نظر خود را انتخاب کنید:\n(سرویس فعلی: ${getProviderSpec(activeProvider).title})`,
+      buildProvidersKeyboard(activeProvider),
+    );
+    return;
+  }
+
+  if (data.startsWith('cb:prov:')) {
+    const nextProv = data.slice('cb:prov:'.length);
+    const updated = await setActiveProviderAndModel(userRow.tgId, nextProv);
+    const spec = getProviderSpec(updated.provider);
+    await answerToast(`✅ سرویس فعال: ${spec.shortBadge}`);
+    const auth = await resolveProviderAuth({
+      ...userRow,
+      provider: updated.provider,
+      model: updated.model,
+    });
+    const statusHint = auth.isReady
+      ? '✅ آماده دریافت دستورات کدنویسی!'
+      : `⚠️ ${spec.signupHint}\nبرای ثبت کلید: /setkey ${spec.id} YOUR_KEY`;
+    await safeEdit(
+      `🌐 سرویس فعال: ${spec.title}\n🧠 مدل پیش‌فرض: ${updated.model}\n${statusHint}\n\nیک مدل از لیست زیر انتخاب کنید:`,
+      buildModelsKeyboard(updated.provider, updated.model),
+    );
+    return;
+  }
+
+  if (data === 'cb:models') {
+    await answerToast();
+    await safeEdit(
+      `🤖 انتخاب مدل روی سرویس ${getProviderSpec(activeProvider).shortBadge} (فعلی: ${userRow.model}):`,
+      buildModelsKeyboard(activeProvider, userRow.model),
+    );
+    return;
+  }
+
+  if (data === 'cb:sync_opencode') {
+    await answerToast('🔄 در حال دریافت لیست زنده از opencode.ai...');
+    try {
+      const auth = await resolveProviderAuth(userRow, 'opencode');
+      const liveModels = await fetchLiveOpenCodeFreeModels(auth.apiKey);
+      await safeEdit(
+        `🆓 لیست زنده مدل‌های رایگان OpenCode Zen بروزرسانی شد (${liveModels.length} مدل):`,
+        buildModelsKeyboard('opencode', userRow.model, liveModels),
+      );
+    } catch (err) {
+      await safeEdit(
+        `⚠️ خطا در استعلام زنده مدل‌ها (${err?.message ?? err}). نمایش لیست پیش‌فرض OpenCode:`,
+        buildModelsKeyboard('opencode', userRow.model),
+      );
+    }
+    return;
+  }
+
+  if (data.startsWith('cb:model:')) {
+    const chosenModel = data.slice('cb:model:'.length);
+    await setActiveModel(userRow.tgId, chosenModel);
+    await answerToast(`✅ مدل فعال: ${chosenModel}`);
+    await safeEdit(
+      `✅ مدل کدنویسی روی سرویس ${getProviderSpec(activeProvider).shortBadge} به ${chosenModel} تغییر یافت.`,
+      buildModelsKeyboard(activeProvider, chosenModel),
+    );
+    return;
+  }
+
+  if (data === 'cb:projects') {
+    await answerToast();
     const list = await listProjects(userRow.tgId);
-    await api.sendMessage({
-      chat_id: chatId,
-      text: `🗂 <b>انتخاب پروژه فعال:</b>`,
-      parse_mode: 'HTML',
-      reply_markup: buildProjectsKeyboard(list, userRow.activeProject),
-    });
+    await safeEdit(
+      `📁 پروژه‌های شما (فعال: ${activeProject}):`,
+      buildProjectsKeyboard(list, activeProject),
+    );
     return;
   }
 
-  if (data === 'cb:models' && chatId) {
-    await api.answerCallbackQuery({ callback_query_id: queryId });
-    await api.sendMessage({
-      chat_id: chatId,
-      text: `🤖 <b>انتخاب مدل Google Gemini:</b>`,
-      parse_mode: 'HTML',
-      reply_markup: buildModelSelectorKeyboard(userRow.model),
-    });
-    return;
-  }
-
-  if (data === 'cb:status' && chatId) {
-    await api.answerCallbackQuery({ callback_query_id: queryId });
-    const html = await renderStatusHtml(userRow);
-    await api.sendMessage({ chat_id: chatId, text: html, parse_mode: 'HTML' });
-    return;
-  }
-
-  if (data === 'cb:reset' && chatId) {
-    await clearConversationHistory(userRow.tgId, userRow.activeProject);
-    await api.answerCallbackQuery({
-      callback_query_id: queryId,
-      text: '🧹 حافظه گفتگوی پروژه پاک شد.',
-    });
-    await api.sendMessage({
-      chat_id: chatId,
-      text: `🧹 حافظه چت پروژه <code>${escapeHtml(userRow.activeProject)}</code> پاکسازی شد.`,
-      parse_mode: 'HTML',
-    });
-    return;
-  }
-
-  if (data.startsWith('cb:set_model:') && chatId && messageId) {
-    const modelId = data.slice('cb:set_model:'.length);
-    await setActiveModel(userRow.tgId, modelId);
-    await api.answerCallbackQuery({
-      callback_query_id: queryId,
-      text: `مدل فعال: ${modelId}`,
-    });
-    await api.editMessageText({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `✅ مدل هوش مصنوعی فعال به <code>${escapeHtml(modelId)}</code> تغییر یافت.`,
-      parse_mode: 'HTML',
-      reply_markup: buildModelSelectorKeyboard(modelId),
-    });
-    return;
-  }
-
-  if (data.startsWith('cb:switch_proj:') && chatId && messageId) {
-    const rawName = data.slice('cb:switch_proj:'.length);
-    const cleanName = sanitizeProjectName(rawName);
-    await ensureProject(userRow.tgId, cleanName);
-    await setActiveProject(userRow.tgId, cleanName);
+  if (data.startsWith('cb:proj:')) {
+    const nextProj = data.slice('cb:proj:'.length);
+    await setActiveProject(userRow.tgId, nextProj);
     const list = await listProjects(userRow.tgId);
-    await api.answerCallbackQuery({
-      callback_query_id: queryId,
-      text: `پروژه فعال: ${cleanName}`,
-    });
-    await api.editMessageText({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `✅ پروژه فعال به <code>${escapeHtml(cleanName)}</code> تغییر یافت.`,
-      parse_mode: 'HTML',
-      reply_markup: buildProjectsKeyboard(list, cleanName),
-    });
+    await answerToast(`📁 پروژه فعال: ${nextProj}`);
+    await safeEdit(
+      `📁 پروژه فعال به ${nextProj} تغییر یافت:`,
+      buildProjectsKeyboard(list, nextProj),
+    );
     return;
   }
 
-  await api.answerCallbackQuery({ callback_query_id: queryId });
+  if (data === 'cb:files') {
+    await answerToast();
+    const files = await listWorkspaceFiles(userRow.tgId, activeProject);
+    const text =
+      files.length === 0
+        ? `📂 پروژه ${activeProject} فعلاً خالی است.`
+        : `📂 فایل‌های پروژه ${activeProject} (${files.length}):\n\n` +
+          files
+            .slice(0, 50)
+            .map((f) => `• ${f.path} (${f.sizeBytes} B)`)
+            .join('\n');
+    await sendSafeText(chatId, text);
+    return;
+  }
+
+  if (data === 'cb:zip') {
+    await answerToast('📦 در حال ساخت آرشیو ZIP...');
+    await deliverProjectZip(chatId, userRow.tgId, activeProject);
+    return;
+  }
+
+  if (data === 'cb:clear') {
+    await clearConversationHistory(userRow.tgId, activeProject);
+    await answerToast('🧹 حافظه چت پاک شد');
+    await sendSafeText(chatId, `🧹 تاریخچه گفتگوی پروژه \`${activeProject}\` پاکسازی شد.`);
+    return;
+  }
+
+  if (data === 'cb:status') {
+    await answerToast();
+    const files = await listWorkspaceFiles(userRow.tgId, activeProject);
+    const auth = await resolveProviderAuth(userRow);
+    await safeEdit(
+      [
+        `📊 وضعیت ایجنت Telegram Serverless`,
+        `• سرویس فعال: ${auth.providerSpec.title}`,
+        `• مدل فعال: ${auth.model}`,
+        `• پروژه فعال: ${activeProject} (${files.length} فایل)`,
+        `• پرامپت‌ها: ${userRow.promptCount || 0} | ابزارها: ${userRow.toolCallCount || 0}`,
+      ].join('\n'),
+      buildMainDashboardKeyboard(miniAppUrl),
+    );
+    return;
+  }
+
+  await answerToast();
 }

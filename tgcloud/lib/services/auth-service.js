@@ -1,17 +1,16 @@
 import db, { eq, sql } from 'sdk/db';
 import { botSettings, users } from '../../schema.js';
+import { getProviderSpec, PROVIDERS } from '../agent/providers.js';
 
-export const RECOMMENDED_MODELS = [
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (پیشرفته - معماری و دیباگ)' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (سریع - کدنویسی روزمره)' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (فوق سریع)' },
-];
+export const RECOMMENDED_MODELS = PROVIDERS.opencode.models;
 
 export async function ensureUser(fromUser) {
   const tgId = Number(fromUser.id);
   const existing = await db.select().from(users).where(eq(users.tgId, tgId)).get();
 
   if (existing) {
+    if (!existing.provider) existing.provider = 'opencode';
+    if (!existing.model) existing.model = getProviderSpec(existing.provider).defaultModel;
     if (
       (fromUser.username && fromUser.username !== existing.username) ||
       (fromUser.first_name && fromUser.first_name !== existing.firstName)
@@ -41,7 +40,9 @@ export async function ensureUser(fromUser) {
       isAdmin: isFirstOwner,
       isAllowed: isFirstOwner,
       activeProject: 'default',
-      model: 'gemini-2.5-pro',
+      provider: 'opencode',
+      model: 'big-pickle',
+      providerConfigs: {},
     })
     .onConflictDoNothing({ target: users.tgId })
     .run();
@@ -66,12 +67,110 @@ export async function setSetting(key, value) {
     .run();
 }
 
-export async function resolveGeminiApiKey(userRow) {
-  if (userRow?.geminiKey && userRow.geminiKey.trim()) {
-    return userRow.geminiKey.trim();
+async function getGlobalProviderConfigs() {
+  const raw = await getSetting('global_provider_configs');
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
   }
-  const globalKey = await getSetting('global_gemini_key');
-  return globalKey ? globalKey.trim() : null;
+}
+
+async function setGlobalProviderConfig(providerId, patch) {
+  const current = await getGlobalProviderConfigs();
+  current[providerId] = {
+    ...(current[providerId] || {}),
+    ...patch,
+  };
+  await setSetting('global_provider_configs', JSON.stringify(current));
+}
+
+export async function saveProviderCredentials(userRow, providerId, { apiKey, baseUrl }) {
+  const spec = getProviderSpec(providerId);
+  const userConfigs =
+    userRow.providerConfigs && typeof userRow.providerConfigs === 'object'
+      ? { ...userRow.providerConfigs }
+      : {};
+
+  const prev = userConfigs[spec.id] || {};
+  const updatedEntry = {
+    ...prev,
+    ...(typeof apiKey === 'string' && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+    ...(typeof baseUrl === 'string' && baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+  };
+  userConfigs[spec.id] = updatedEntry;
+
+  const updateFields = {
+    providerConfigs: userConfigs,
+  };
+  if (spec.id === 'gemini' && updatedEntry.apiKey) {
+    updateFields.geminiKey = updatedEntry.apiKey;
+  }
+
+  await db
+    .update(users)
+    .set(updateFields)
+    .where(eq(users.tgId, userRow.tgId))
+    .run();
+
+  if (userRow.isAdmin) {
+    await setGlobalProviderConfig(spec.id, updatedEntry);
+    if (spec.id === 'gemini' && updatedEntry.apiKey) {
+      await setSetting('global_gemini_key', updatedEntry.apiKey);
+    }
+  }
+}
+
+export async function resolveProviderAuth(userRow, overrideProviderId = null) {
+  const providerId = overrideProviderId || userRow?.provider || 'opencode';
+  const spec = getProviderSpec(providerId);
+  const globalConfigs = await getGlobalProviderConfigs();
+  const userConfigs =
+    userRow?.providerConfigs && typeof userRow.providerConfigs === 'object'
+      ? userRow.providerConfigs
+      : {};
+
+  const uEntry = userConfigs[spec.id] || {};
+  const gEntry = globalConfigs[spec.id] || {};
+
+  let apiKey = uEntry.apiKey || gEntry.apiKey || '';
+  if (spec.id === 'gemini' && !apiKey) {
+    apiKey = userRow?.geminiKey || (await getSetting('global_gemini_key')) || '';
+  }
+
+  const baseUrl = uEntry.baseUrl || gEntry.baseUrl || spec.defaultBaseUrl || '';
+  const model =
+    overrideProviderId && overrideProviderId !== userRow?.provider
+      ? spec.defaultModel
+      : userRow?.model || spec.defaultModel;
+
+  let isReady = true;
+  let missingReason = null;
+
+  if (spec.requiresBaseUrl && !baseUrl) {
+    isReady = false;
+    missingReason = `آدرس سرور برای ${spec.title} تنظیم نشده است. با دستور زیر ثبت کنید:\n/freellm https://your-router-host/v1 freellmapi-your-key`;
+  } else if (spec.requiresKey && !apiKey) {
+    isReady = false;
+    missingReason = `کلید API برای سرویس «${spec.title}» ثبت نشده است.\n💡 ${spec.signupHint}\nسپس کلید را با دستور زیر ثبت کنید:\n/setkey ${spec.id} YOUR_API_KEY\n(یا با دستور /provider یکی از سرویس‌های رایگان بدون کلید مثل LLM7 یا OpenCode را انتخاب کنید!)`;
+  }
+
+  return {
+    providerId: spec.id,
+    providerSpec: spec,
+    apiKey,
+    baseUrl,
+    model,
+    isReady,
+    missingReason,
+  };
+}
+
+export async function resolveGeminiApiKey(userRow) {
+  const res = await resolveProviderAuth(userRow, 'gemini');
+  return res.apiKey || null;
 }
 
 export async function resolveGithubToken(userRow) {
@@ -83,15 +182,8 @@ export async function resolveGithubToken(userRow) {
 }
 
 export async function saveUserGeminiKey(userRow, apiKey) {
-  const clean = String(apiKey ?? '').trim();
-  await db
-    .update(users)
-    .set({ geminiKey: clean })
-    .where(eq(users.tgId, userRow.tgId))
-    .run();
-  if (userRow.isAdmin) {
-    await setSetting('global_gemini_key', clean);
-  }
+  await saveProviderCredentials(userRow, 'gemini', { apiKey });
+  await setActiveProviderAndModel(userRow.tgId, 'gemini', 'gemini-2.5-pro');
 }
 
 export async function saveUserGithubToken(userRow, token) {
@@ -120,7 +212,9 @@ export async function setUserAccess(targetTgId, allowed) {
         isAdmin: false,
         isAllowed: Boolean(allowed),
         activeProject: 'default',
-        model: 'gemini-2.5-pro',
+        provider: 'opencode',
+        model: 'big-pickle',
+        providerConfigs: {},
       })
       .run();
   }
@@ -140,6 +234,20 @@ export async function setActiveModel(tgId, model) {
     .set({ model: String(model).trim() })
     .where(eq(users.tgId, Number(tgId)))
     .run();
+}
+
+export async function setActiveProviderAndModel(tgId, providerId, model = null) {
+  const spec = getProviderSpec(providerId);
+  const nextModel = model && String(model).trim() ? String(model).trim() : spec.defaultModel;
+  await db
+    .update(users)
+    .set({
+      provider: spec.id,
+      model: nextModel,
+    })
+    .where(eq(users.tgId, Number(tgId)))
+    .run();
+  return { provider: spec.id, model: nextModel };
 }
 
 export async function incrementStats(tgId, toolCallsCount) {

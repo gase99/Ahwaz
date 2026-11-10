@@ -2,92 +2,95 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>Ahwaz Code Studio — Telegram Serverless</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Ahwaz Serverless Code Studio</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="badge">Serverless V8</span>
-        <h1>Ahwaz Code Studio</h1>
-      </div>
-      <div class="topbar-actions">
-        <select id="projectSelect" title="پروژه فعال"></select>
-        <button id="newProjectBtn" class="btn secondary" title="پروژه جدید">+ پروژه</button>
-        <button id="settingsBtn" class="btn secondary">⚙️ تنظیمات</button>
-      </div>
-    </header>
-
-    <main class="workspace-grid">
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <span>فایل‌های پروژه</span>
-          <button id="newFileBtn" class="btn tiny">+ فایل</button>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="badge-dot"></span>
+          <strong>Ahwaz Code Studio</strong>
+          <span class="sub-chip">@tgcloud v2.1</span>
         </div>
-        <ul id="fileList" class="file-list"></ul>
-      </aside>
+        <div class="topbar-actions">
+          <select id="providerSelect" class="select-pill" title="انتخاب سرویس هوش مصنوعی"></select>
+          <select id="modelSelect" class="select-pill" title="انتخاب مدل"></select>
+          <button id="btnProviderCfg" class="btn-icon" title="تنظیم کلید و آدرس API">🔑</button>
+          <select id="projectSelect" class="select-pill" title="پروژه فعال"></select>
+          <button id="btnNewProject" class="btn-icon" title="پروژه جدید">➕</button>
+          <button id="btnExportZip" class="btn-primary-sm" title="ارسال ZIP به چت تلگرام">📦 ZIP</button>
+        </div>
+      </header>
 
-      <section class="editor-pane">
-        <div class="editor-toolbar">
-          <span id="currentFilePath" dir="ltr" class="file-label">فایلی انتخاب نشده است</span>
-          <div class="editor-btns">
-            <button id="deleteFileBtn" class="btn danger tiny" disabled>حذف</button>
-            <button id="saveFileBtn" class="btn primary tiny" disabled>ذخیره فایل</button>
+      <div id="cfgModal" class="cfg-panel hidden">
+        <div class="cfg-row">
+          <strong id="cfgTitle">تنظیمات سرویس هوش مصنوعی</strong>
+          <button id="btnSyncOpenCode" class="btn-ghost-sm">🔄 بروزرسانی مدل‌های رایگان OpenCode</button>
+        </div>
+        <p id="cfgHint" class="cfg-hint"></p>
+        <div class="cfg-inputs">
+          <input id="cfgBaseUrl" type="url" dir="ltr" placeholder="Base URL (مثلاً https://router.example.com/v1 برای FreeLLMAPI)" />
+          <input id="cfgApiKey" type="password" dir="ltr" placeholder="API Key (برای سرویس‌های بدون کلید خالی بگذارید)" />
+          <input id="cfgCustomModel" type="text" dir="ltr" placeholder="مدل دلخواه (مثلاً big-pickle یا auto:smart)" />
+        </div>
+        <div class="cfg-actions">
+          <button id="btnSaveCfg" class="btn-accent">💾 ذخیره و فعال‌سازی سرویس</button>
+          <button id="btnCloseCfg" class="btn-ghost-sm">بستن</button>
+        </div>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="agent">🤖 ایجنت کدنویس</button>
+        <button class="tab" data-tab="files">📂 فایل‌ها (<span id="fileCount">0</span>)</button>
+        <button class="tab" data-tab="editor">💻 ویرایشگر کد</button>
+      </nav>
+
+      <main class="panels">
+        <!-- Agent Panel -->
+        <section id="panel-agent" class="panel active">
+          <div id="agentLog" class="chat-feed">
+            <div class="msg system">
+              👋 به استودیوی کدنویسی <b>Telegram Serverless</b> خوش آمدید!<br />
+              پشتیبانی بومی از <b>مدل‌های رایگان OpenCode Zen</b>، <b>FreeLLMAPI / ApiFreeLLM</b>، <b>LLM7 بدون کلید</b>، <b>OpenRouter :free</b>، <b>Groq</b> و <b>Google Gemini</b>.
+            </div>
           </div>
-        </div>
-        <textarea
-          id="codeEditor"
-          dir="ltr"
-          spellcheck="false"
-          placeholder="// یک فایل از ستون کناری انتخاب کنید یا از ایجنت هوش مصنوعی پایین صفحه بخواهید کدها را بسازد..."
-        ></textarea>
-      </section>
-    </main>
+          <form id="promptForm" class="prompt-bar">
+            <textarea
+              id="promptInput"
+              rows="2"
+              placeholder="دستور کدنویسی را بنویسید (مثلاً: یک وب‌اپ مدیریت تسک بساز و تست کن)..."
+            ></textarea>
+            <button type="submit" id="btnRunAgent" class="btn-send">اجرا 🚀</button>
+          </form>
+        </section>
 
-    <footer class="prompt-dock">
-      <div class="prompt-row">
-        <input
-          id="agentPromptInput"
-          type="text"
-          placeholder="دستور کدنویسی به Google Gemini (مثلاً: یک API مدیریت تسک با تست بساز)..."
-        />
-        <button id="runAgentBtn" class="btn primary">🚀 اجرا با ایجنت</button>
-      </div>
-      <div id="agentOutput" class="agent-output hidden"></div>
-    </footer>
+        <!-- Files Panel -->
+        <section id="panel-files" class="panel">
+          <div class="panel-toolbar">
+            <button id="btnCreateFile" class="btn-secondary">📄 ساخت فایل جدید</button>
+            <button id="btnRefresh" class="btn-ghost">🔄 بروزرسانی</button>
+          </div>
+          <ul id="fileList" class="file-list"></ul>
+        </section>
 
-    <!-- Settings Modal -->
-    <div id="settingsModal" class="modal hidden">
-      <div class="modal-card">
-        <h2>⚙️ تنظیمات هوش مصنوعی و GitHub</h2>
-        <label>
-          مدل Google Gemini:
-          <select id="modelInput">
-            <option value="gemini-2.5-pro">gemini-2.5-pro (پیشرفته)</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash (سریع)</option>
-            <option value="gemini-2.0-flash">gemini-2.0-flash (فوق سریع)</option>
-          </select>
-        </label>
-        <label>
-          کلید Google Gemini API (<span id="geminiKeyState">بررسی...</span>):
-          <input id="geminiKeyInput" dir="ltr" type="password" placeholder="AIzaSy..." />
-        </label>
-        <label>
-          توکن GitHub (<span id="githubTokenState">بررسی...</span>):
-          <input id="githubTokenInput" dir="ltr" type="password" placeholder="ghp_..." />
-        </label>
-        <div class="modal-actions">
-          <button id="closeSettingsBtn" class="btn secondary">بستن</button>
-          <button id="saveSettingsBtn" class="btn primary">ذخیره در SQLite</button>
-        </div>
-      </div>
+        <!-- Code Editor Panel -->
+        <section id="panel-editor" class="panel">
+          <div class="editor-header">
+            <input id="editorPath" type="text" dir="ltr" placeholder="src/index.js" />
+            <div class="editor-btns">
+              <button id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
+              <button id="btnDeleteFile" class="btn-danger">🗑️</button>
+            </div>
+          </div>
+          <textarea id="editorContent" class="code-area" dir="ltr" spellcheck="false" placeholder="// Select a file or create a new one..."></textarea>
+        </section>
+      </main>
     </div>
 
+    <div id="toast" class="toast hidden"></div>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

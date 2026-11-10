@@ -1,25 +1,20 @@
 import db, { and, eq } from 'sdk/db';
 import { chatHistories } from '../../schema.js';
+import { normalizeHistoryTurns } from '../agent/llm-router.js';
 import { sanitizeProjectName } from './workspace-service.js';
 
 const MAX_HISTORY_TURNS = 36;
 
 export function trimHistorySafely(contents, maxEntries = MAX_HISTORY_TURNS) {
-  if (!Array.isArray(contents)) return [];
-  if (contents.length <= maxEntries) return [...contents];
+  const normalized = normalizeHistoryTurns(contents);
+  if (normalized.length <= maxEntries) return [...normalized];
 
-  let startIdx = contents.length - maxEntries;
-  while (startIdx < contents.length) {
-    const turn = contents[startIdx];
-    const isCleanUserTurn =
-      turn?.role === 'user' &&
-      Array.isArray(turn.parts) &&
-      turn.parts.length > 0 &&
-      !turn.parts.some((p) => Boolean(p.functionResponse));
-    if (isCleanUserTurn) break;
+  let startIdx = normalized.length - maxEntries;
+  while (startIdx < normalized.length) {
+    if (normalized[startIdx]?.role === 'user') break;
     startIdx += 1;
   }
-  return contents.slice(startIdx);
+  return normalized.slice(startIdx);
 }
 
 export async function getConversationHistory(tgId, projectName) {
@@ -32,7 +27,7 @@ export async function getConversationHistory(tgId, projectName) {
     .get();
 
   if (!row || !Array.isArray(row.messages)) return [];
-  return row.messages;
+  return normalizeHistoryTurns(row.messages);
 }
 
 export async function saveConversationHistory(tgId, projectName, messages) {

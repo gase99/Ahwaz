@@ -239,3 +239,33 @@ export async function sendDocumentBytes({
     caption,
   });
 }
+
+export async function sendSafeText(chatId, markdown, extra = {}) {
+  const chunks = chunkMarkdownSafely(markdown, 3400);
+  let firstMsg = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    const html = markdownToTelegramHtml(chunks[i]);
+    const params = {
+      chat_id: chatId,
+      text: html,
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      ...(isLast && extra.reply_markup ? { reply_markup: extra.reply_markup } : {}),
+    };
+
+    try {
+      const sent = await api.sendMessage(params);
+      if (!firstMsg) firstMsg = sent;
+    } catch {
+      const sent = await api.sendMessage({
+        chat_id: chatId,
+        text: chunks[i].slice(0, 4000),
+        ...(isLast && extra.reply_markup ? { reply_markup: extra.reply_markup } : {}),
+      });
+      if (!firstMsg) firstMsg = sent;
+    }
+  }
+  return firstMsg;
+}
