@@ -1,0 +1,38 @@
+{
+  "name": "ahwaz-telegram-coding-agent",
+  "version": "1.0.0",
+  "description": "Autonomous Telegram Coding Agent powered by Google Gemini with Modular Telegram Services & Local Bot API Server support",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "telegram:migrate-local": "tsx src/scripts/migrate-to-local-api.ts",
+    "telegram:migrate-local:prod": "node dist/scripts/migrate-to-local-api.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0 || ^3.0.0",
+    "adm-zip": "^0.5.16 || ^0.6.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "grammy": "^1.35.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.2",
+    "vitest": "^5.1.0"
+  },
+  "license": "MIT"
+}
