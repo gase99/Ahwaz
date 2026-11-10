@@ -7,7 +7,7 @@ import { listWorkspaceFiles } from '../lib/services/workspace-service.js';
 /**
  * Serverless Endpoint to run an AI coding prompt directly from the Mini App Studio (`POST /api/agent`).
  */
-export default async function (input, ctx) {
+export default async function agentEndpoint(input, ctx) {
   const caller = ctx?.initData?.user;
   if (!caller || !caller.id) {
     throw new EndpointError('کاربر احراز هویت نشد.', { code: 'UNAUTHORIZED' });
@@ -30,7 +30,6 @@ export default async function (input, ctx) {
       attachedNotes: [],
     });
 
-    // Deliver any exported ZIP/files straight to the user's private Telegram chat
     for (const artifact of result.artifacts) {
       await sendDocumentBytes({
         chatId: userRow.tgId,
@@ -45,7 +44,7 @@ export default async function (input, ctx) {
       await api
         .sendMessage({
           chat_id: userRow.tgId,
-          text: `✅ تسک ارسالی از استودیو Mini App روی پروژه «${result.projectName}» انجام شد.`,
+          text: `✅ تسک ارسالی از استودیو Mini App روی پروژه «${result.projectName}» (${result.providerBadge}) انجام شد.`,
         })
         .catch(() => undefined);
     }
@@ -53,7 +52,13 @@ export default async function (input, ctx) {
     const files = await listWorkspaceFiles(userRow.tgId, result.projectName);
     return {
       replyText: result.replyText,
+      text: result.replyText,
       projectName: result.projectName,
+      providerId: result.providerId,
+      providerBadge: result.providerBadge,
+      model: result.model,
+      routedVia: result.routedVia,
+      toolLogs: result.toolLogs,
       toolCallsExecuted: result.toolCallsExecuted,
       files,
     };

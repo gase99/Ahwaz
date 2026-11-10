@@ -1,18 +1,18 @@
 import {
   incrementStats,
-  resolveGeminiApiKey,
   resolveGithubToken,
+  resolveProviderAuth,
 } from '../services/auth-service.js';
 import {
   getConversationHistory,
   saveConversationHistory,
 } from '../services/conversation-service.js';
 import { ensureProject, listWorkspaceFiles } from '../services/workspace-service.js';
-import { generateGeminiStep } from './gemini-service.js';
-import { buildSystemPrompt } from './system-prompt.js';
+import { generateUnifiedLlmStep } from './llm-router.js';
+import { buildServerlessSystemPrompt } from './system-prompt.js';
 import { createAgentTools } from './tools.js';
 
-const MAX_AGENT_STEPS = 16;
+const MAX_AGENT_ITERATIONS = 10;
 
 export async function runCodingAgent({
   userRow,
@@ -20,173 +20,174 @@ export async function runCodingAgent({
   attachedNotes = [],
   onProgress,
 }) {
-  const geminiKey = await resolveGeminiApiKey(userRow);
-  if (!geminiKey) {
-    throw new Error(
-      'کلید Google Gemini هنوز ثبت نشده است. ابتدا با دستور زیر کلید خود را ثبت کنید:\n`/setkey AIzaSy...`',
-    );
+  const auth = await resolveProviderAuth(userRow);
+  if (!auth.isReady) {
+    throw new Error(auth.missingReason || 'تنظیمات سرویس هوش مصنوعی کامل نیست.');
   }
+
+  const tgId = userRow.tgId;
+  const projectName = userRow.activeProject || 'default';
+  await ensureProject(tgId, projectName);
 
   const githubToken = await resolveGithubToken(userRow);
-  const projectName = userRow.activeProject || 'default';
-  const model = userRow.model || 'gemini-2.5-pro';
-
-  await ensureProject(userRow.tgId, projectName);
-  const filesPreview = await listWorkspaceFiles(userRow.tgId, projectName);
-
-  const systemInstruction = buildSystemPrompt({
-    projectName,
-    filesPreview: filesPreview.slice(0, 60),
-    hasGithubToken: Boolean(githubToken),
-  });
-
-  const history = [...(await getConversationHistory(userRow.tgId, projectName))];
-
-  let fullPrompt = String(prompt ?? '').trim();
-  if (attachedNotes.length > 0) {
-    fullPrompt = `${fullPrompt}\n\n[فایل‌های بارگذاری‌شده در Workspace پروژه:\n${attachedNotes.map((n) => `- ${n}`).join('\n')}]`;
-  }
-
-  history.push({
-    role: 'user',
-    parts: [{ text: fullPrompt }],
-  });
+  const fileManifest = await listWorkspaceFiles(tgId, projectName);
 
   const tools = createAgentTools();
   const toolMap = new Map(tools.map((t) => [t.declaration.name, t]));
-  const functionDeclarations = tools.map((t) => t.declaration);
+  const declarations = tools.map((t) => t.declaration);
 
-  const artifacts = [];
-  const toolCallsExecuted = [];
-  const toolContext = {
-    tgId: userRow.tgId,
+  const systemInstruction = buildServerlessSystemPrompt({
     projectName,
-    githubToken,
-    queueArtifact: (item) => artifacts.push(item),
-  };
+    providerTitle: auth.providerSpec.shortBadge,
+    model: auth.model,
+    fileManifest,
+    githubConfigured: Boolean(githubToken),
+  });
 
-  let finalReplyText = '';
+  const fullPrompt =
+    attachedNotes.length > 0
+      ? `${attachedNotes.join('\n')}\n\n${prompt}`
+      : prompt;
+
+  const history = await getConversationHistory(tgId, projectName);
+  const workingTurns = [...history, { role: 'user', text: fullPrompt }];
+
+  const toolLogs = [];
+  const toolCallsExecuted = [];
+  const artifacts = [];
+  let finalAnswer = '';
   let stepsUsed = 0;
+  let lastRoutedVia = null;
 
-  for (let step = 1; step <= MAX_AGENT_STEPS; step++) {
+  for (let step = 1; step <= MAX_AGENT_ITERATIONS; step += 1) {
     stepsUsed = step;
     if (onProgress) {
       await onProgress({
         step,
         phase: 'thinking',
-        label: `تحلیل و کدنویسی با ${model} (گام ${step})...`,
+        providerBadge: auth.providerSpec.shortBadge,
+        model: auth.model,
+        toolLogs,
       });
     }
 
-    const response = await generateGeminiStep({
-      apiKey: geminiKey,
-      model,
+    const llmRes = await generateUnifiedLlmStep({
+      providerId: auth.providerId,
+      baseUrl: auth.baseUrl,
+      apiKey: auth.apiKey,
+      model: auth.model,
       systemInstruction,
-      contents: history,
-      functionDeclarations,
+      turns: workingTurns,
+      declarations,
     });
 
-    const candidate = response?.candidates?.[0];
-    const modelContent = candidate?.content;
+    if (llmRes.routedVia) {
+      lastRoutedVia = llmRes.routedVia;
+    }
 
-    if (!modelContent || !Array.isArray(modelContent.parts) || modelContent.parts.length === 0) {
-      finalReplyText =
-        'مدل پاسخی تولید نکرد. لطفاً درخواست خود را واضح‌تر بفرستید یا `/reset` بزنید.';
-      history.push({ role: 'model', parts: [{ text: finalReplyText }] });
+    workingTurns.push({
+      role: 'assistant',
+      text: llmRes.text || '',
+      toolCalls: llmRes.toolCalls || [],
+      ...(llmRes.rawGeminiParts ? { rawGeminiParts: llmRes.rawGeminiParts } : {}),
+    });
+
+    if (!llmRes.toolCalls || llmRes.toolCalls.length === 0) {
+      finalAnswer = llmRes.text || '✅ عملیات با موفقیت انجام شد.';
       break;
     }
 
-    // Preserve exact modelContent.parts (retains thought & thoughtSignature for Gemini 2.5 / 3)
-    history.push({
-      role: modelContent.role || 'model',
-      parts: modelContent.parts,
-    });
-
-    const functionCalls = modelContent.parts
-      .map((p) => p.functionCall)
-      .filter((fc) => Boolean(fc && fc.name));
-
-    if (functionCalls.length === 0) {
-      const textChunks = modelContent.parts
-        .filter((p) => !p.thought && typeof p.text === 'string')
-        .map((p) => p.text);
-      finalReplyText = textChunks.join('\n').trim() || 'انجام شد.';
-      break;
-    }
-
-    const functionResponseParts = [];
-
-    for (const fc of functionCalls) {
-      const tool = toolMap.get(fc.name);
-      const args = fc.args && typeof fc.args === 'object' ? fc.args : {};
-
-      if (!tool) {
-        functionResponseParts.push({
-          functionResponse: {
-            ...(fc.id ? { id: fc.id } : {}),
-            name: fc.name,
-            response: { error: `ابزار ناشناخته: ${fc.name}` },
-          },
-        });
-        continue;
-      }
-
-      const label = tool.formatProgress(args);
-      if (onProgress) {
-        await onProgress({ step, phase: 'tool_start', toolName: fc.name, label });
-      }
-
-      let payload;
-      let ok = true;
-      try {
-        payload = await tool.execute(args, toolContext);
-        if (payload && payload.error) ok = false;
-      } catch (err) {
-        ok = false;
-        payload = { error: err instanceof Error ? err.message : String(err) };
-      }
-
-      toolCallsExecuted.push({ name: fc.name, label, ok });
+    const toolResults = [];
+    for (const call of llmRes.toolCalls) {
+      const toolDef = toolMap.get(call.name);
+      const label = toolDef
+        ? toolDef.formatProgress(call.args || {})
+        : `⚙️ ${call.name}`;
+      toolLogs.push(label);
 
       if (onProgress) {
         await onProgress({
           step,
-          phase: ok ? 'tool_done' : 'tool_error',
-          toolName: fc.name,
-          label,
+          phase: 'tool',
+          providerBadge: auth.providerSpec.shortBadge,
+          model: auth.model,
+          currentTool: label,
+          toolLogs,
         });
       }
 
-      functionResponseParts.push({
-        functionResponse: {
-          ...(fc.id ? { id: fc.id } : {}),
-          name: fc.name,
-          response: payload,
-        },
+      let resultObj;
+      let ok = true;
+      if (!toolDef) {
+        ok = false;
+        resultObj = { error: `Unknown tool: ${call.name}` };
+      } else {
+        try {
+          resultObj = await toolDef.execute(call.args || {}, {
+            tgId,
+            projectName,
+            githubToken,
+            queueArtifact: (art) => artifacts.push(art),
+          });
+          if (resultObj && resultObj.error) {
+            ok = false;
+          }
+        } catch (err) {
+          ok = false;
+          resultObj = { error: String(err?.message ?? err) };
+        }
+      }
+
+      toolCallsExecuted.push({
+        name: call.name,
+        args: call.args || {},
+        ok,
+      });
+
+      toolResults.push({
+        id: call.id,
+        name: call.name,
+        result: resultObj,
       });
     }
 
-    history.push({
-      role: 'user',
-      parts: functionResponseParts,
+    workingTurns.push({
+      role: 'tool',
+      results: toolResults,
     });
 
-    if (step === MAX_AGENT_STEPS) {
-      finalReplyText =
-        '⚠️ سقف گام‌های خودکار این نوبت کامل شد و تمام فایل‌ها در دیتابیس ذخیره شدند. برای ادامه بنویسید: «ادامه بده».';
-      history.push({ role: 'model', parts: [{ text: finalReplyText }] });
+    if (step === MAX_AGENT_ITERATIONS) {
+      finalAnswer =
+        (llmRes.text ? `${llmRes.text}\n\n` : '') +
+        '⚠️ به سقف مراحل ابزار در این نوبت رسیدیم. در صورت نیاز بنویسید «ادامه بده».';
     }
   }
 
-  await saveConversationHistory(userRow.tgId, projectName, history);
-  await incrementStats(userRow.tgId, toolCallsExecuted.length);
+  if (
+    lastRoutedVia &&
+    lastRoutedVia.includes('set /opencode <key>') &&
+    !finalAnswer.includes('/opencode')
+  ) {
+    finalAnswer +=
+      '\n\n💡 _نکته: برای اجرای مستقیم روی سرور OpenCode Zen، کلید رایگان خود را از `opencode.ai/auth` دریافت کرده و با دستور `/opencode YOUR_KEY` ثبت کنید (این درخواست موقتاً روی سرویس رایگان بدون کلید LLM7 اجرا شد)._';
+  }
+
+  await saveConversationHistory(tgId, projectName, workingTurns);
+  await incrementStats(tgId, toolCallsExecuted.length);
 
   return {
-    replyText: finalReplyText,
-    projectName,
-    modelUsed: model,
+    replyText: finalAnswer,
+    text: finalAnswer,
     stepsUsed,
     toolCallsExecuted,
+    toolLogs,
     artifacts,
+    projectName,
+    providerId: auth.providerId,
+    providerBadge: auth.providerSpec.shortBadge,
+    model: auth.model,
+    routedVia: lastRoutedVia,
   };
 }
+
+export const runServerlessCodingAgent = runCodingAgent;

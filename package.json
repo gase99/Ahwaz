@@ -1,8 +1,8 @@
 {
   "name": "ahwaz-tgcloud-coding-agent",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "Autonomous Telegram Coding Agent & Mini App Code Studio built natively for Telegram Serverless (tgcloud) + Google Gemini",
+  "description": "Autonomous Telegram Coding Agent & Mini App Code Studio for Telegram Serverless (@tgcloud) supporting OpenCode Zen Free Models, FreeLLMAPI, ApiFreeLLM, Keyless LLM7/Pollinations, OpenRouter, Groq & Google Gemini",
   "type": "module",
   "scripts": {
     "build": "node miniapp/build.mjs",

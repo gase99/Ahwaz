@@ -1,13 +1,18 @@
 import { EndpointError } from 'sdk';
 import {
+  fetchLiveOpenCodeFreeModels,
+  PROVIDER_LIST,
+} from '../lib/agent/providers.js';
+import {
   ensureUser,
-  resolveGeminiApiKey,
-  resolveGithubToken,
+  resolveProviderAuth,
+  saveProviderCredentials,
   saveUserGeminiKey,
-  saveUserGithubToken,
   setActiveModel,
   setActiveProject,
+  setActiveProviderAndModel,
 } from '../lib/services/auth-service.js';
+import { deliverProjectZip } from '../lib/services/command-service.js';
 import {
   deleteWorkspacePath,
   ensureProject,
@@ -18,103 +23,130 @@ import {
   writeWorkspaceFile,
 } from '../lib/services/workspace-service.js';
 
-/**
- * Serverless Endpoint for the hosted Telegram Mini App Code Studio (`POST /api/studio`).
- * `ctx.initData.user` is cryptographically verified by the Telegram Serverless platform.
- */
-export default async function (input, ctx) {
+export default async function studioEndpoint(input, ctx) {
   const caller = ctx?.initData?.user;
   if (!caller || !caller.id) {
-    throw new EndpointError('کاربر تلگرام احراز هویت نشد.', { code: 'UNAUTHORIZED' });
+    throw new EndpointError('لطفاً استودیو کدنویسی را از داخل تلگرام باز کنید.', {
+      code: 'UNAUTHORIZED',
+    });
   }
 
   const userRow = await ensureUser(caller);
   if (!userRow.isAdmin && !userRow.isAllowed) {
-    throw new EndpointError(`دسترسی شما مجاز نیست (ID: ${userRow.tgId}).`, {
+    throw new EndpointError('حساب کاربری شما توسط ادمین تایید نشده است.', {
       code: 'FORBIDDEN',
     });
   }
 
-  const action = String(input?.action || 'bootstrap');
+  const action = input?.action || 'state';
+  const activeProject = userRow.activeProject || 'default';
 
   switch (action) {
+    case 'state':
     case 'bootstrap': {
-      const projectList = await listProjects(userRow.tgId);
-      const files = await listWorkspaceFiles(userRow.tgId, userRow.activeProject);
-      const hasGeminiKey = Boolean(await resolveGeminiApiKey(userRow));
-      const hasGithubToken = Boolean(await resolveGithubToken(userRow));
+      await ensureProject(userRow.tgId, activeProject);
+      const projects = await listProjects(userRow.tgId);
+      const files = await listWorkspaceFiles(userRow.tgId, activeProject);
+      const auth = await resolveProviderAuth(userRow);
 
       return {
+        ok: true,
         user: {
           tgId: userRow.tgId,
           firstName: userRow.firstName,
-          isAdmin: userRow.isAdmin,
-          activeProject: userRow.activeProject,
-          model: userRow.model,
+          isAdmin: Boolean(userRow.isAdmin),
+          provider: auth.providerId,
+          model: auth.model,
+          providerReady: auth.isReady,
+          baseUrl: auth.baseUrl,
         },
-        hasGeminiKey,
-        hasGithubToken,
-        projects: projectList,
+        providers: PROVIDER_LIST,
+        activeProject,
+        projects,
         files,
       };
     }
 
-    case 'switch_project': {
-      const name = sanitizeProjectName(input?.projectName);
-      await ensureProject(userRow.tgId, name);
-      await setActiveProject(userRow.tgId, name);
-      const files = await listWorkspaceFiles(userRow.tgId, name);
-      const projectList = await listProjects(userRow.tgId);
-      return { activeProject: name, projects: projectList, files };
+    case 'setProvider':
+    case 'save_settings': {
+      if (input?.geminiKey) {
+        await saveUserGeminiKey(userRow, input.geminiKey);
+        if (input?.model) {
+          await setActiveModel(userRow.tgId, input.model);
+        }
+        return { ok: true, provider: 'gemini', model: input?.model || 'gemini-2.5-pro' };
+      }
+
+      const providerId = String(input?.providerId || userRow.provider || 'opencode');
+      const model = input?.model ? String(input.model) : null;
+      if (input?.apiKey || input?.baseUrl) {
+        await saveProviderCredentials(userRow, providerId, {
+          apiKey: input.apiKey,
+          baseUrl: input.baseUrl,
+        });
+      }
+      const updated = await setActiveProviderAndModel(userRow.tgId, providerId, model);
+      return { ok: true, ...updated };
     }
 
+    case 'syncOpenCodeModels': {
+      const auth = await resolveProviderAuth(userRow, 'opencode');
+      const models = await fetchLiveOpenCodeFreeModels(auth.apiKey);
+      return { ok: true, models };
+    }
+
+    case 'readFile':
     case 'read_file': {
-      const row = await readWorkspaceFile(
-        userRow.tgId,
-        userRow.activeProject,
-        input?.path,
-      );
-      if (!row) {
+      const file = await readWorkspaceFile(userRow.tgId, activeProject, input?.path || '');
+      if (!file) {
         throw new EndpointError('فایل مورد نظر یافت نشد.', { code: 'NOT_FOUND' });
       }
-      return { path: row.path, content: row.content, sizeBytes: row.sizeBytes };
+      return { ok: true, file };
     }
 
+    case 'saveFile':
     case 'save_file': {
-      const res = await writeWorkspaceFile(
+      const saved = await writeWorkspaceFile(
         userRow.tgId,
-        userRow.activeProject,
-        input?.path,
+        activeProject,
+        input?.path || '',
         input?.content ?? '',
       );
-      const files = await listWorkspaceFiles(userRow.tgId, userRow.activeProject);
-      return { saved: res, files };
+      const files = await listWorkspaceFiles(userRow.tgId, activeProject);
+      return { ok: true, path: saved.path, files };
     }
 
+    case 'deleteFile':
     case 'delete_file': {
-      const deleted = await deleteWorkspacePath(
-        userRow.tgId,
-        userRow.activeProject,
-        input?.path,
-      );
-      const files = await listWorkspaceFiles(userRow.tgId, userRow.activeProject);
-      return { deleted, files };
+      await deleteWorkspacePath(userRow.tgId, activeProject, input?.path || '');
+      const files = await listWorkspaceFiles(userRow.tgId, activeProject);
+      return { ok: true, files };
     }
 
-    case 'save_settings': {
-      if (typeof input?.geminiKey === 'string' && input.geminiKey.trim()) {
-        await saveUserGeminiKey(userRow, input.geminiKey.trim());
-      }
-      if (typeof input?.githubToken === 'string' && input.githubToken.trim()) {
-        await saveUserGithubToken(userRow, input.githubToken.trim());
-      }
-      if (typeof input?.model === 'string' && input.model.trim()) {
-        await setActiveModel(userRow.tgId, input.model.trim());
-      }
-      return { ok: true };
+    case 'switchProject':
+    case 'switch_project': {
+      const name = sanitizeProjectName(input?.projectName || 'default');
+      await ensureProject(userRow.tgId, name);
+      await setActiveProject(userRow.tgId, name);
+      const projects = await listProjects(userRow.tgId);
+      const files = await listWorkspaceFiles(userRow.tgId, name);
+      return { ok: true, activeProject: name, projects, files };
+    }
+
+    case 'setModel':
+    case 'set_model': {
+      const model = String(input?.model || 'big-pickle');
+      await setActiveModel(userRow.tgId, model);
+      return { ok: true, model };
+    }
+
+    case 'exportZipToChat':
+    case 'export_zip': {
+      const res = await deliverProjectZip(userRow.tgId, userRow.tgId, activeProject);
+      return { ok: true, ...res };
     }
 
     default:
-      throw new EndpointError(`عملیات نامعتبر: ${action}`, { code: 'BAD_ACTION' });
+      throw new EndpointError(`اکشن ناشناخته: ${action}`, { code: 'UNKNOWN_ACTION' });
   }
 }

@@ -4,146 +4,148 @@ import { ensureUser } from '../lib/services/auth-service.js';
 import { bytesToUtf8 } from '../lib/services/binary-utils.js';
 import { handleSlashCommand } from '../lib/services/command-service.js';
 import {
-  createLiveProgressTracker,
-  escapeHtml,
   sendDocumentBytes,
-  sendFormattedMessage,
+  sendSafeText,
 } from '../lib/services/delivery-service.js';
-import { buildAfterReplyKeyboard } from '../lib/services/keyboard-service.js';
+import { buildPostAnswerKeyboard } from '../lib/services/keyboard-service.js';
 import {
+  ensureProject,
   importZipIntoWorkspace,
   writeWorkspaceFile,
 } from '../lib/services/workspace-service.js';
 
-export default async function (message) {
-  if (!message || !message.from || !message.chat) return;
+async function ingestTelegramDocument(msg, userRow) {
+  const doc = msg.document;
+  const fileName = doc.file_name || 'uploaded_file.txt';
+  const activeProject = userRow.activeProject || 'default';
+  await ensureProject(userRow.tgId, activeProject);
 
-  const chatId = message.chat.id;
-  const userRow = await ensureUser(message.from);
-
-  if (!userRow.isAdmin && !userRow.isAllowed) {
-    await api.sendMessage({
-      chat_id: chatId,
-      text: `⛔️ دسترسی شما به این ایجنت مجاز نیست.\nشناسه عددی تلگرام شما: <code>${userRow.tgId}</code>\n(ادمین ربات می‌تواند با دستور <code>/allow ${userRow.tgId}</code> دسترسی شما را فعال کند.)`,
-      parse_mode: 'HTML',
-    });
-    return;
+  if (doc.file_size && doc.file_size > 15 * 1024 * 1024) {
+    throw new Error('حجم فایل ارسالی بیش از سقف مجاز ۱۵ مگابایت است.');
   }
 
-  // 1. Handle uploaded documents (.zip archives or source files)
-  if (message.document) {
-    const doc = message.document;
-    const fileName = String(doc.file_name || 'uploaded.txt').trim();
-    const caption = String(message.caption || '').trim();
+  const fileBytes = await api.getFileContent(doc.file_id);
 
-    try {
-      const bytes = await api.getFileContent(doc.file_id);
-      let attachedNotes = [];
-
-      if (fileName.toLowerCase().endsWith('.zip')) {
-        const savedPaths = await importZipIntoWorkspace(
-          userRow.tgId,
-          userRow.activeProject,
-          bytes,
-        );
-        attachedNotes = [
-          `ZIP "${fileName}" extracted (${savedPaths.length} files): ${savedPaths.slice(0, 25).join(', ')}`,
-        ];
-
-        if (!caption) {
-          await api.sendMessage({
-            chat_id: chatId,
-            text: `📦 آرشیو <code>${escapeHtml(fileName)}</code> با موفقیت در پروژه <code>${escapeHtml(userRow.activeProject)}</code> استخراج شد (${savedPaths.length} فایل).\nحالا دستور برنامه‌نویسی خود را ارسال کنید!`,
-            parse_mode: 'HTML',
-          });
-          return;
-        }
-      } else {
-        const textContent = bytesToUtf8(bytes);
-        await writeWorkspaceFile(
-          userRow.tgId,
-          userRow.activeProject,
-          fileName,
-          textContent,
-        );
-        attachedNotes = [`Uploaded file saved at "${fileName}"`];
-
-        if (!caption) {
-          await api.sendMessage({
-            chat_id: chatId,
-            text: `📄 فایل <code>${escapeHtml(fileName)}</code> در پروژه <code>${escapeHtml(userRow.activeProject)}</code> ذخیره شد.\nحالا هر تغییر یا دیباگی می‌خواهید بنویسید!`,
-            parse_mode: 'HTML',
-          });
-          return;
-        }
-      }
-
-      await runAndDeliverAgentTurn({
-        chatId,
-        replyToMessageId: message.message_id,
-        userRow,
-        prompt: caption,
-        attachedNotes,
-      });
-    } catch (err) {
-      await api.sendMessage({
-        chat_id: chatId,
-        text: `❌ خطا در پردازش فایل ارسالی: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-    return;
+  if (fileName.toLowerCase().endsWith('.zip')) {
+    const savedPaths = await importZipIntoWorkspace(userRow.tgId, activeProject, fileBytes);
+    return {
+      kind: 'zip',
+      imported: savedPaths.length,
+      summary: `آرشیو ZIP با نام \`${fileName}\` استخراج شد و ${savedPaths.length} فایل در پروژه \`${activeProject}\` ذخیره گردید.`,
+    };
   }
 
-  const text = String(message.text ?? '').trim();
-  if (!text) return;
-
-  // 2. Handle slash commands
-  if (text.startsWith('/')) {
-    await handleSlashCommand(message, userRow);
-    return;
-  }
-
-  // 3. Handle natural language / coding prompts
-  await runAndDeliverAgentTurn({
-    chatId,
-    replyToMessageId: message.message_id,
-    userRow,
-    prompt: text,
-    attachedNotes: [],
-  });
+  const content = bytesToUtf8(fileBytes);
+  const saved = await writeWorkspaceFile(userRow.tgId, activeProject, fileName, content);
+  return {
+    kind: 'file',
+    imported: 1,
+    path: saved.path,
+    summary: `فایل \`${saved.path}\` (${saved.sizeBytes} بایت) در پروژه \`${activeProject}\` ذخیره شد.`,
+  };
 }
 
-async function runAndDeliverAgentTurn({
-  chatId,
-  replyToMessageId,
-  userRow,
-  prompt,
-  attachedNotes,
-}) {
-  await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => undefined);
+export default async function handleMessage(msg) {
+  if (!msg || !msg.from || !msg.chat) return;
 
-  const tracker = await createLiveProgressTracker({
+  const chatId = msg.chat.id;
+  const userRow = await ensureUser(msg.from);
+
+  if (typeof msg.text === 'string' && msg.text.trim().startsWith('/')) {
+    const handled = await handleSlashCommand(msg, userRow);
+    if (handled) return;
+  }
+
+  if (!userRow.isAllowed) {
+    await sendSafeText(
+      chatId,
+      `⛔ دسترسی شما به این ایجنت مجاز نیست (\`${userRow.tgId}\`). از ادمین بخواهید \`/allow ${userRow.tgId}\` را اجرا کند.`,
+    );
+    return;
+  }
+
+  const attachedNotes = [];
+  if (msg.document) {
+    try {
+      const ingestResult = await ingestTelegramDocument(msg, userRow);
+      const captionPrompt = (msg.caption || msg.text || '').trim();
+      if (!captionPrompt) {
+        await sendSafeText(
+          chatId,
+          `✅ ${ingestResult.summary}\n\nحالا می‌توانید از ایجنت بخواهید فایل‌ها را بررسی، تکمیل یا دیباگ کند!`,
+          { reply_markup: buildPostAnswerKeyboard(userRow.activeProject || 'default') },
+        );
+        return;
+      }
+      attachedNotes.push(`[فایل پیوست‌شده توسط کاربر وارد پروژه شد: ${ingestResult.summary}]`);
+    } catch (err) {
+      await sendSafeText(chatId, `❌ خطا در پردازش فایل ارسالی: ${err?.message ?? err}`);
+      return;
+    }
+  }
+
+  const effectivePrompt = (msg.text || msg.caption || '').trim();
+  if (!effectivePrompt) return;
+
+  const statusMsg = await sendSafeText(
     chatId,
-    projectName: userRow.activeProject,
-  });
+    `🧠 ایجنت کدنویسی اهواز (پروژه \`${userRow.activeProject || 'default'}\`) در حال تحلیل درخواست شما...`,
+  );
+
+  let lastEditMs = 0;
+  const updateProgress = async (info) => {
+    const now = Date.now();
+    if (now - lastEditMs < 1400) return;
+    lastEditMs = now;
+    const recentTools = info.toolLogs.slice(-4).join('\n');
+    const text = [
+      `🤖 [${info.providerBadge} • ${info.model}] (گام ${info.step})`,
+      info.phase === 'tool'
+        ? `در حال اجرا: ${info.currentTool}`
+        : `💭 در حال تفکر و کدنویسی...`,
+      recentTools ? `\nعملیات انجام‌شده:\n${recentTools}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    try {
+      await api.editMessageText({
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        text,
+      });
+    } catch {
+      // Ignore rate limit or identical text error
+    }
+  };
 
   try {
+    await api.sendChatAction({ chat_id: chatId, action: 'typing' }).catch(() => undefined);
     const result = await runCodingAgent({
       userRow,
-      prompt,
+      prompt: effectivePrompt,
       attachedNotes,
-      onProgress: (ev) => tracker.update(ev),
+      onProgress: updateProgress,
     });
 
-    await tracker.finish(
-      `تکمیل شد (${result.toolCallsExecuted.length} عملیات در پروژه ${result.projectName})`,
-    );
+    try {
+      await api.deleteMessage({ chat_id: chatId, message_id: statusMsg.message_id });
+    } catch {
+      // Ignore if unable to delete status placeholder
+    }
 
-    await sendFormattedMessage({
-      chatId,
-      markdown: result.replyText,
-      replyToMessageId,
-      replyMarkup: buildAfterReplyKeyboard(),
+    const headerLine = `🌐 ${result.providerBadge} • \`${result.model}\`${
+      result.routedVia ? ` _(via ${result.routedVia})_` : ''
+    }`;
+    const toolSummaryBlock =
+      result.toolLogs.length > 0
+        ? `\n\n━━━━━━━━━━━━━━\n🛠️ **ابزارهای اجراشده (${result.toolLogs.length}):**\n` +
+          result.toolLogs.slice(-8).map((l) => `• ${l}`).join('\n') +
+          `\n${headerLine}`
+        : `\n\n_${headerLine}_`;
+
+    await sendSafeText(chatId, `${result.replyText}${toolSummaryBlock}`, {
+      reply_markup: buildPostAnswerKeyboard(result.projectName),
     });
 
     for (const artifact of result.artifacts) {
@@ -156,11 +158,15 @@ async function runAndDeliverAgentTurn({
       });
     }
   } catch (err) {
-    await tracker.dismiss();
-    await api.sendMessage({
-      chat_id: chatId,
-      text: `❌ <b>خطا در اجرای ایجنت:</b>\n<code>${escapeHtml(err instanceof Error ? err.message : String(err))}</code>`,
-      parse_mode: 'HTML',
-    });
+    const errText = `❌ خطا در اجرای ایجنت:\n${err?.message ?? err}`;
+    try {
+      await api.editMessageText({
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        text: errText,
+      });
+    } catch {
+      await sendSafeText(chatId, errText);
+    }
   }
 }
