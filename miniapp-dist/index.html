@@ -2,90 +2,221 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Ahwaz Serverless Code Studio</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Ahwaz Code Studio — Mini App</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <span class="badge-dot"></span>
-          <strong>Ahwaz Code Studio</strong>
-          <span class="sub-chip">@tgcloud v2.1</span>
+      <header class="tg-header">
+        <button class="icon-btn" id="btnHeaderBack" title="بازگشت">‹</button>
+        <div class="tg-brand">
+          <div class="tg-brand-name">Ahwaz Code Studio</div>
+          <div class="tg-brand-sub">@tgcloud v2.1 · Telegram Serverless</div>
         </div>
-        <div class="topbar-actions">
-          <select id="providerSelect" class="select-pill" title="انتخاب سرویس هوش مصنوعی"></select>
+        <div class="tg-header-controls">
+          <select
+            id="providerSelect"
+            class="select-pill"
+            title="انتخاب سرویس هوش مصنوعی"
+          ></select>
           <select id="modelSelect" class="select-pill" title="انتخاب مدل"></select>
-          <button id="btnProviderCfg" class="btn-icon" title="تنظیم کلید و آدرس API">🔑</button>
-          <select id="projectSelect" class="select-pill" title="پروژه فعال"></select>
-          <button id="btnNewProject" class="btn-icon" title="پروژه جدید">➕</button>
-          <button id="btnExportZip" class="btn-primary-sm" title="ارسال ZIP به چت تلگرام">📦 ZIP</button>
+          <button class="icon-btn" id="btnRefresh" title="بروزرسانی وضعیت">🔄</button>
         </div>
       </header>
 
-      <div id="cfgModal" class="cfg-panel hidden">
-        <div class="cfg-row">
-          <strong id="cfgTitle">تنظیمات سرویس هوش مصنوعی</strong>
-          <button id="btnSyncOpenCode" class="btn-ghost-sm">🔄 بروزرسانی مدل‌های رایگان OpenCode</button>
-        </div>
-        <p id="cfgHint" class="cfg-hint"></p>
-        <div class="cfg-inputs">
-          <input id="cfgBaseUrl" type="url" dir="ltr" placeholder="Base URL (مثلاً https://router.example.com/v1 برای FreeLLMAPI)" />
-          <input id="cfgApiKey" type="password" dir="ltr" placeholder="API Key (برای سرویس‌های بدون کلید خالی بگذارید)" />
-          <input id="cfgCustomModel" type="text" dir="ltr" placeholder="مدل دلخواه (مثلاً big-pickle یا auto:smart)" />
-        </div>
-        <div class="cfg-actions">
-          <button id="btnSaveCfg" class="btn-accent">💾 ذخیره و فعال‌سازی سرویس</button>
-          <button id="btnCloseCfg" class="btn-ghost-sm">بستن</button>
-        </div>
-      </div>
-
-      <nav class="tabs">
-        <button class="tab active" data-tab="agent">🤖 ایجنت کدنویس</button>
-        <button class="tab" data-tab="files">📂 فایل‌ها (<span id="fileCount">0</span>)</button>
-        <button class="tab" data-tab="editor">💻 ویرایشگر کد</button>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="agent" role="tab">🤖 ایجنت</button>
+        <button
+          class="tab"
+          data-tab="files"
+          role="tab"
+          aria-label="فایل‌ها"
+        >
+          📂 فایل‌ها
+          <span class="tab-badge" id="tabFilesCount">0</span>
+        </button>
+        <button class="tab" data-tab="editor" role="tab">💻 ویرایشگر</button>
+        <button class="tab" data-tab="settings" role="tab">⚙️ تنظیمات</button>
+        <button class="tab" data-tab="help" role="tab">📘 راهنما</button>
       </nav>
 
       <main class="panels">
         <!-- Agent Panel -->
-        <section id="panel-agent" class="panel active">
+        <section id="panel-agent" class="panel active panel-mainbtn">
           <div id="agentLog" class="chat-feed">
             <div class="msg system">
-              👋 به استودیوی کدنویسی <b>Telegram Serverless</b> خوش آمدید!<br />
-              پشتیبانی بومی از <b>مدل‌های رایگان OpenCode Zen</b>، <b>FreeLLMAPI / ApiFreeLLM</b>، <b>LLM7 بدون کلید</b>، <b>OpenRouter :free</b>، <b>Groq</b> و <b>Google Gemini</b>.
+              👋 خوش آمدید به <b>Code Studio</b> (Telegram Serverless)!<br />
+              پشتیبانی از مدل‌های رایگان <b>OpenCode Zen</b>، <b>FreeLLMAPI / ApiFreeLLM</b>، <b>LLM7 بدون کلید</b>، <b>OpenRouter :free</b>، <b>Groq</b> و <b>Google Gemini</b>.
             </div>
           </div>
           <form id="promptForm" class="prompt-bar">
             <textarea
               id="promptInput"
               rows="2"
-              placeholder="دستور کدنویسی را بنویسید (مثلاً: یک وب‌اپ مدیریت تسک بساز و تست کن)..."
+              placeholder="درخواست کدنویسی را بنویسید (مثلاً: یک وب‌اپ مدیریت تسک بساز و تست کن)..."
             ></textarea>
-            <button type="submit" id="btnRunAgent" class="btn-send">اجرا 🚀</button>
+            <button type="submit" id="btnRunAgent" class="btn-send">
+              اجرا 🚀
+            </button>
           </form>
         </section>
 
         <!-- Files Panel -->
         <section id="panel-files" class="panel">
           <div class="panel-toolbar">
-            <button id="btnCreateFile" class="btn-secondary">📄 ساخت فایل جدید</button>
-            <button id="btnRefresh" class="btn-ghost">🔄 بروزرسانی</button>
+            <button id="btnCreateFile" class="btn-secondary">📄 فایل جدید</button>
+            <button id="btnRefreshFiles" class="btn-ghost" title="بروزرسانی">🔄</button>
           </div>
           <ul id="fileList" class="file-list"></ul>
         </section>
 
         <!-- Code Editor Panel -->
-        <section id="panel-editor" class="panel">
+        <section id="panel-editor" class="panel panel-mainbtn">
           <div class="editor-header">
-            <input id="editorPath" type="text" dir="ltr" placeholder="src/index.js" />
+            <button class="icon-btn" id="btnEditorBack" title="بازگشت">‹</button>
+            <input
+              id="editorPath"
+              type="text"
+              dir="ltr"
+              placeholder="src/index.js"
+            />
             <div class="editor-btns">
-              <button id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
               <button id="btnDeleteFile" class="btn-danger">🗑️</button>
+              <button id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
             </div>
           </div>
-          <textarea id="editorContent" class="code-area" dir="ltr" spellcheck="false" placeholder="// Select a file or create a new one..."></textarea>
+          <textarea
+            id="editorContent"
+            class="code-area"
+            dir="ltr"
+            spellcheck="false"
+            placeholder="// فایلی را انتخاب کنید یا یک فایل جدید بسازید..."
+          ></textarea>
+        </section>
+
+        <!-- Settings Panel: models & API keys -->
+        <section id="panel-settings" class="panel">
+          <div class="section-wrap">
+            <div class="section-head">
+              <div class="section-title">⚙️ تنظیمات سرویس‌ها و کلیدهای API</div>
+            </div>
+            <p class="section-desc">
+              برای هر سرویس، کلید API / آدرس سرور و مدل را ثبت کنید. وضعیت
+              فعال بودن هر سرویس نمایش داده می‌شود (کلیدها ذخیره شده و هرگز
+              نمایش داده نمی‌شوند).
+            </p>
+            <div id="providersGrid" class="provider-cards"></div>
+            <div class="settings-footer">
+              <button
+                id="btnSyncOpenCode"
+                class="btn-ghost-sm"
+                title="دریافت لیست زنده مدل‌های رایگان OpenCode"
+              >
+                🔄 بروزرسانی مدل‌های رایگان OpenCode
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Help Panel: connection guide per provider -->
+        <section id="panel-help" class="panel">
+          <div class="section-wrap">
+            <div class="section-head">
+              <div class="section-title">📘 راهنمای اتصال به مدل‌ها</div>
+            </div>
+            <p class="section-desc">
+              روش اتصال، کلید لازم، دستور ربات و لینک ثبت‌نام برای هر سرویس.
+              لینک‌های ثبت‌نام در مرورگر داخل تلگرام باز می‌شوند.
+            </p>
+            <div id="helpGrid" class="help-cards"></div>
+
+            <div class="help-section">
+              <div class="section-title">🤖 دستورات ربات تلگرام</div>
+              <ul class="cmd-list">
+                <li><code>/start</code> — داشبورد و وضعیت سرویس‌ها</li>
+                <li>
+                  <code>/provider &lt;سرویس&gt;</code> — انتخاب سرویس:
+                  opencode, freellmapi, apifreellm, llm7, pollinations,
+                  openrouter, groq, gemini, custom
+                </li>
+                <li>
+                  <code>/opencode [KEY]</code> — مدل‌های رایگان OpenCode Zen /
+                  ثبت کلید رایگان
+                </li>
+                <li>
+                  <code>/freellm &lt;URL&gt; [KEY] [MODEL]</code> — اتصال به روتر
+                  FreeLLMAPI ·
+                  <code>/freellm &lt;KEY&gt;</code> — ApiFreeLLM.com
+                </li>
+                <li>
+                  <code>/setkey &lt;سرویس&gt; &lt;KEY&gt;</code> — ثبت امن کلید
+                  API (پیام حاوی کلید حذف می‌شود)
+                </li>
+                <li>
+                  <code>/setcustom &lt;URL&gt; [KEY] [MODEL]</code> — اتصال به
+                  هر سرویس سازگار با OpenAI
+                </li>
+                <li><code>/model &lt;model_id&gt;</code> — تغییر مدل کدنویسی</li>
+                <li>
+                  <code>/project &lt;name&gt;</code> ·
+                  <code>/files</code> ·
+                  <code>/zip</code> ·
+                  <code>/clear</code> ·
+                  <code>/status</code> — مدیریت پروژه
+                </li>
+                <li>
+                  <code>/ghclone &lt;repo&gt;</code> ·
+                  <code>/ghpush &lt;repo&gt; &lt;پیام&gt;</code> — اتصال به
+                  GitHub
+                </li>
+              </ul>
+              <p class="cmd-note">
+                ثبت مینی آپ: پس از اجرا کردن <code>npm run deploy</code>، آدرس
+                خروجی (<code>Static: https://app&lt;id&gt;.tgcloud.ai/</code>)
+                را با دستور
+                <code>/setminiapp https://...</code> در ربات ثبت کنید تا دکمه
+                Code Studio فعال شود.
+              </p>
+            </div>
+
+            <div class="help-section contacts">
+              <div class="section-title">📞 پشتیبانی و ارتباط</div>
+              <ul>
+                <li>
+                  توسعه‌دهنده:
+                  <b>عباس کروشاد</b> —
+                  <a
+                    href="https://t.me/webxplusx"
+                    target="_blank"
+                    rel="noopener"
+                    >@webxplusx در تلگرام</a
+                  >
+                </li>
+                <li>
+                  کدهای منبع:
+                  <a
+                    href="https://github.com/gase99/Ahwaz"
+                    target="_blank"
+                    rel="noopener"
+                    >github.com/gase99/Ahwaz</a
+                ></li>
+                <li>
+                  پلتفرم:
+                  <a
+                    href="https://core.telegram.org/bots/serverless"
+                    target="_blank"
+                    rel="noopener"
+                    >Telegram Serverless</a
+                  >
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
       </main>
     </div>
