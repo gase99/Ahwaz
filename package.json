@@ -1,38 +1,23 @@
 {
-  "name": "ahwaz-telegram-coding-agent",
-  "version": "1.0.0",
-  "description": "Autonomous Telegram Coding Agent powered by Google Gemini with Modular Telegram Services & Local Bot API Server support",
+  "name": "ahwaz-tgcloud-coding-agent",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Autonomous Telegram Coding Agent & Mini App Code Studio built natively for Telegram Serverless (tgcloud) + Google Gemini",
   "type": "module",
-  "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "node miniapp/build.mjs",
+    "deploy": "npm run build && tgcloud push",
+    "push": "tgcloud push",
+    "migrate": "tgcloud migrate",
+    "status": "tgcloud status",
+    "diff": "tgcloud diff",
+    "run": "tgcloud run",
+    "webhook": "tgcloud webhook",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "telegram:migrate-local": "tsx src/scripts/migrate-to-local-api.ts",
-    "telegram:migrate-local:prod": "node dist/scripts/migrate-to-local-api.js"
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "dependencies": {
-    "@google/genai": "^1.0.0 || ^3.0.0",
-    "adm-zip": "^0.5.16 || ^0.6.1",
-    "dotenv": "^16.4.7",
-    "fastify": "^5.2.0",
-    "grammy": "^1.35.0",
-    "pino": "^9.6.0",
-    "pino-pretty": "^13.0.0",
-    "zod": "^4.6.7"
+    "validate:tgcloud": "node scripts/validate-tgcloud.mjs"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.7",
-    "@types/node": "^22.13.0",
-    "tsx": "^4.23.15",
-    "typescript": "^5.8.2",
+    "@tgcloud/cli": "^0.2.0",
     "vitest": "^5.1.0"
-  },
-  "license": "MIT"
+  }
 }

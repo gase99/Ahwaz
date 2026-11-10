@@ -1,22 +1,5 @@
-# Dependencies
-node_modules/
-
-# Compiled output
-dist/
-
-# Environment variables & secrets
+node_modules
+.tgcloud
 .env
-.env.local
-.env.*.local
-
-# Agent runtime data & user workspaces
-workspaces/
-data/
-telegram-bot-api-data/
-tmp/
-
-# Logs & OS files
 *.log
-npm-debug.log*
-.DS_Store
-coverage/
+coverage

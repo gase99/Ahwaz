@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/@tgcloud/cli/schema/tgcloud.json",
+  "static": {
+    // Serve index.html for unknown extension-less paths (Mini App Studio):
+    "spa": true,
+    // The Mini App static build folder hosted on https://app<app_id>.tgcloud.ai/:
+    "source": "miniapp-dist"
+  }
+}

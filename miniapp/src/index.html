@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Ahwaz Code Studio — Telegram Serverless</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="badge">Serverless V8</span>
+        <h1>Ahwaz Code Studio</h1>
+      </div>
+      <div class="topbar-actions">
+        <select id="projectSelect" title="پروژه فعال"></select>
+        <button id="newProjectBtn" class="btn secondary" title="پروژه جدید">+ پروژه</button>
+        <button id="settingsBtn" class="btn secondary">⚙️ تنظیمات</button>
+      </div>
+    </header>
+
+    <main class="workspace-grid">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <span>فایل‌های پروژه</span>
+          <button id="newFileBtn" class="btn tiny">+ فایل</button>
+        </div>
+        <ul id="fileList" class="file-list"></ul>
+      </aside>
+
+      <section class="editor-pane">
+        <div class="editor-toolbar">
+          <span id="currentFilePath" dir="ltr" class="file-label">فایلی انتخاب نشده است</span>
+          <div class="editor-btns">
+            <button id="deleteFileBtn" class="btn danger tiny" disabled>حذف</button>
+            <button id="saveFileBtn" class="btn primary tiny" disabled>ذخیره فایل</button>
+          </div>
+        </div>
+        <textarea
+          id="codeEditor"
+          dir="ltr"
+          spellcheck="false"
+          placeholder="// یک فایل از ستون کناری انتخاب کنید یا از ایجنت هوش مصنوعی پایین صفحه بخواهید کدها را بسازد..."
+        ></textarea>
+      </section>
+    </main>
+
+    <footer class="prompt-dock">
+      <div class="prompt-row">
+        <input
+          id="agentPromptInput"
+          type="text"
+          placeholder="دستور کدنویسی به Google Gemini (مثلاً: یک API مدیریت تسک با تست بساز)..."
+        />
+        <button id="runAgentBtn" class="btn primary">🚀 اجرا با ایجنت</button>
+      </div>
+      <div id="agentOutput" class="agent-output hidden"></div>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card">
+        <h2>⚙️ تنظیمات هوش مصنوعی و GitHub</h2>
+        <label>
+          مدل Google Gemini:
+          <select id="modelInput">
+            <option value="gemini-2.5-pro">gemini-2.5-pro (پیشرفته)</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash (سریع)</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash (فوق سریع)</option>
+          </select>
+        </label>
+        <label>
+          کلید Google Gemini API (<span id="geminiKeyState">بررسی...</span>):
+          <input id="geminiKeyInput" dir="ltr" type="password" placeholder="AIzaSy..." />
+        </label>
+        <label>
+          توکن GitHub (<span id="githubTokenState">بررسی...</span>):
+          <input id="githubTokenInput" dir="ltr" type="password" placeholder="ghp_..." />
+        </label>
+        <div class="modal-actions">
+          <button id="closeSettingsBtn" class="btn secondary">بستن</button>
+          <button id="saveSettingsBtn" class="btn primary">ذخیره در SQLite</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
