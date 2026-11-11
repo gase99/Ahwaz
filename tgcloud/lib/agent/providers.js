@@ -13,6 +13,7 @@ export const PROVIDERS = {
     chatPath: '/chat/completions',
     modelsPath: '/models',
     requiresKey: false, // Works with free opencode.ai/auth key; falls back to 'public' token if unset
+    acceptsOptionalKey: true,
     defaultPlaceholderKey: 'public',
     defaultModel: 'big-pickle',
     signupHint: 'دریافت کلید رایگان بدون کارت بانکی از https://opencode.ai/auth',
@@ -68,6 +69,7 @@ export const PROVIDERS = {
     chatPath: '/chat/completions',
     modelsPath: '/models',
     requiresKey: false,
+    acceptsOptionalKey: true,
     defaultPlaceholderKey: 'unused',
     defaultModel: 'default',
     signupHint: 'بدون نیاز به ثبت‌نام یا کلید کار می‌کند (برای سقف بالاتر: dash.llm7.io)',
@@ -152,6 +154,7 @@ export const PROVIDERS = {
     chatPath: '/chat/completions',
     modelsPath: '/models',
     requiresKey: false,
+    acceptsOptionalKey: true,
     requiresBaseUrl: true,
     defaultPlaceholderKey: 'unused',
     defaultModel: 'auto',
@@ -179,7 +182,7 @@ export const PROVIDER_HELP = {
     commands: ['`/provider opencode`', '`/opencode [KEY]`'],
     links: [
       { label: 'دریافت کلید رایگان OpenCode', url: 'https://opencode.ai/auth' },
-      { label: 'كتالگ مدل‌های زنده (opencode.ai/zen/v1/models)', url: 'https://opencode.ai/zen/v1/models' },
+      { label: 'کاتالوگ مدل‌های زنده (opencode.ai/zen/v1/models)', url: 'https://opencode.ai/zen/v1/models' },
     ],
     note: 'در بخش تنظیمات مینی آپ، دکمه «بروزرسانی مدل‌های رایگان OpenCode» لیست مدل‌ها را از سرور opencode.ai دریافت می‌کند.',
   },

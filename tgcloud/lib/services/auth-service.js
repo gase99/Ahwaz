@@ -15,14 +15,18 @@ export async function ensureUser(fromUser) {
       (fromUser.username && fromUser.username !== existing.username) ||
       (fromUser.first_name && fromUser.first_name !== existing.firstName)
     ) {
+      const nextUsername = fromUser.username ?? existing.username;
+      const nextFirstName = fromUser.first_name ?? existing.firstName;
       await db
         .update(users)
         .set({
-          username: fromUser.username ?? existing.username,
-          firstName: fromUser.first_name ?? existing.firstName,
+          username: nextUsername,
+          firstName: nextFirstName,
         })
         .where(eq(users.tgId, tgId))
         .run();
+      existing.username = nextUsername;
+      existing.firstName = nextFirstName;
     }
     return existing;
   }
@@ -115,6 +119,11 @@ export async function saveProviderCredentials(userRow, providerId, { apiKey, bas
     .where(eq(users.tgId, userRow.tgId))
     .run();
 
+  userRow.providerConfigs = userConfigs;
+  if (spec.id === 'gemini' && updatedEntry.apiKey) {
+    userRow.geminiKey = updatedEntry.apiKey;
+  }
+
   if (userRow.isAdmin) {
     await setGlobalProviderConfig(spec.id, updatedEntry);
     if (spec.id === 'gemini' && updatedEntry.apiKey) {
@@ -183,7 +192,9 @@ export async function resolveGithubToken(userRow) {
 
 export async function saveUserGeminiKey(userRow, apiKey) {
   await saveProviderCredentials(userRow, 'gemini', { apiKey });
-  await setActiveProviderAndModel(userRow.tgId, 'gemini', 'gemini-2.5-pro');
+  const updated = await setActiveProviderAndModel(userRow.tgId, 'gemini', 'gemini-2.5-pro');
+  userRow.provider = updated.provider;
+  userRow.model = updated.model;
 }
 
 export async function saveUserGithubToken(userRow, token) {

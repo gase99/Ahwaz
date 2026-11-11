@@ -24,6 +24,32 @@ import {
   writeWorkspaceFile,
 } from '../lib/services/workspace-service.js';
 
+async function buildProvidersPayload(userRow) {
+  const providerStatuses = await Promise.all(
+    PROVIDER_LIST.map((spec) => resolveProviderAuth(userRow, spec.id)),
+  );
+  return PROVIDER_LIST.map((spec, idx) => {
+    const status = providerStatuses[idx];
+    return {
+      id: spec.id,
+      title: spec.title,
+      shortBadge: spec.shortBadge,
+      protocol: spec.protocol,
+      defaultBaseUrl: spec.defaultBaseUrl,
+      baseUrl: status.baseUrl,
+      defaultModel: spec.defaultModel,
+      requiresKey: spec.requiresKey,
+      acceptsOptionalKey: Boolean(spec.acceptsOptionalKey),
+      requiresBaseUrl: Boolean(spec.requiresBaseUrl),
+      signupHint: spec.signupHint,
+      models: spec.models,
+      isReady: status.isReady,
+      missingReason: status.missingReason,
+      apiKeyConfigured: Boolean(status.apiKey),
+    };
+  });
+}
+
 export default async function studioEndpoint(input, ctx) {
   const caller = ctx?.initData?.user;
   if (!caller || !caller.id) {
@@ -49,11 +75,7 @@ export default async function studioEndpoint(input, ctx) {
       const projects = await listProjects(userRow.tgId);
       const files = await listWorkspaceFiles(userRow.tgId, activeProject);
       const auth = await resolveProviderAuth(userRow);
-
-      // وضعیت آمادگی هر سرویس (بدون نمایش کلید خود — فقط Boolean)
-      const providerStatuses = await Promise.all(
-        PROVIDER_LIST.map((spec) => resolveProviderAuth(userRow, spec.id)),
-      );
+      const providers = await buildProvidersPayload(userRow);
 
       return {
         ok: true,
@@ -68,24 +90,7 @@ export default async function studioEndpoint(input, ctx) {
           providerKeyConfigured: Boolean(auth.apiKey),
           baseUrl: auth.baseUrl,
         },
-        providers: PROVIDER_LIST.map((spec, idx) => {
-          const status = providerStatuses[idx];
-          return {
-            id: spec.id,
-            title: spec.title,
-            shortBadge: spec.shortBadge,
-            protocol: spec.protocol,
-            defaultBaseUrl: spec.defaultBaseUrl,
-            defaultModel: spec.defaultModel,
-            requiresKey: spec.requiresKey,
-            requiresBaseUrl: spec.requiresBaseUrl,
-            signupHint: spec.signupHint,
-            models: spec.models,
-            isReady: status.isReady,
-            missingReason: status.missingReason,
-            apiKeyConfigured: Boolean(status.apiKey),
-          };
-        }),
+        providers,
         providerHelp: Object.entries(PROVIDER_HELP).map(([id, help]) => ({
           id,
           ...help,
@@ -100,10 +105,13 @@ export default async function studioEndpoint(input, ctx) {
     case 'save_settings': {
       if (input?.geminiKey) {
         await saveUserGeminiKey(userRow, input.geminiKey);
+        const chosenModel = input?.model ? String(input.model).trim() : 'gemini-2.5-pro';
         if (input?.model) {
-          await setActiveModel(userRow.tgId, input.model);
+          await setActiveModel(userRow.tgId, chosenModel);
+          userRow.model = chosenModel;
         }
-        return { ok: true, provider: 'gemini', model: input?.model || 'gemini-2.5-pro' };
+        const providers = await buildProvidersPayload(userRow);
+        return { ok: true, provider: 'gemini', model: chosenModel, providers };
       }
 
       const providerId = String(input?.providerId || userRow.provider || 'opencode');
@@ -115,7 +123,10 @@ export default async function studioEndpoint(input, ctx) {
         });
       }
       const updated = await setActiveProviderAndModel(userRow.tgId, providerId, model);
-      return { ok: true, ...updated };
+      userRow.provider = updated.provider;
+      userRow.model = updated.model;
+      const providers = await buildProvidersPayload(userRow);
+      return { ok: true, ...updated, providers };
     }
 
     case 'syncOpenCodeModels': {

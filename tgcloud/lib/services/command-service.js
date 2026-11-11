@@ -131,7 +131,7 @@ export async function handleSlashCommand(msg, userRow) {
         `• \`/freellm <URL_OR_KEY> [KEY]\` — اتصال به روتر **FreeLLMAPI** یا سرویس **ApiFreeLLM.com**`,
         `• \`/setkey [provider] <KEY>\` — ثبت امن کلید هر سرویس (حذف خودکار پیام)`,
         `• \`/model [model_id]\` — تغییر سریع مدل کدنویسی`,
-        \`• \`/guide [provider_id]\` — راهنمای اتصال به ارائه‌دهنده و مدل\`,
+        `• \`/guide [provider_id]\` — راهنمای اتصال به ارائه‌دهنده و مدل`,
         ``,
         `🛠️ **دستورات مدیریت پروژه و GitHub:**`,
         `• \`/project <name>\` — ساخت یا سوییچ بین پروژه‌ها`,
@@ -170,8 +170,7 @@ export async function handleSlashCommand(msg, userRow) {
                   ]
                 : [],
               ...(help.commands || []).length
-                ? [`
-💬 دستور: ${help.commands.join(' · ')}`]
+                ? ['', `💬 دستور: ${help.commands.join(' · ')}`]
                 : [],
             ]
           : [];
@@ -182,14 +181,14 @@ export async function handleSlashCommand(msg, userRow) {
             `🧠 مدل پیش‌فرض: \`${updated.model}\``,
             `📊 وضعیت: ${statusLine}`,
             ...guideLines,
-          ].join('
-'),
-          { reply_markup: buildModelsKeyboard(updated.provider, updated.model) }
+          ].join('\n'),
+          { reply_markup: buildModelsKeyboard(updated.provider, updated.model) },
         );
         return true;
       }
 
       const auth = await resolveProviderAuth(userRow);
+      const statusMap = {};
       const lines = [
         '🌐 انتخاب سرویس هوش مصنوعی و وضعیت اتصال:',
         `سرویس فعلی: **${auth.providerSpec.shortBadge}** (${auth.isReady ? '✅ آماده' : '⚠️ نیازمند تنظیم'})`,
@@ -199,15 +198,18 @@ export async function handleSlashCommand(msg, userRow) {
       ];
 
       for (const [id, help] of Object.entries(PROVIDER_HELP)) {
-        const spec = getProviderSpec(id);
         const providerAuth = await resolveProviderAuth(userRow, id);
+        statusMap[id] = { isReady: providerAuth.isReady };
         const ready = providerAuth.isReady ? '✅' : '⚠️';
+        const shortMissing = providerAuth.missingReason
+          ? providerAuth.missingReason.split('\n')[0]
+          : 'ثبت کلید/آدرس';
         lines.push(
           `${ready} **${help.title}**${help.keyless ? ' (رایگان، بدون کلید)' : ''}`,
           `   ${help.summary}`,
           providerAuth.isReady
             ? '   وضعیت: آماده به کار'
-            : `   نیاز به تنظیم: ${providerAuth.missingReason || 'ثبت کلید/آدرس'}`,
+            : `   نیاز به تنظیم: ${shortMissing}`,
           ...(help.commands || []).length
             ? [`   دستور: ${help.commands.join(' · ')}`]
             : [],
@@ -224,9 +226,8 @@ export async function handleSlashCommand(msg, userRow) {
         '💡 برای ثبت کلید: `/setkey <provider_id> <API_KEY>`',
       );
 
-      await sendSafeText(chatId, lines.join('
-'), {
-        reply_markup: buildProvidersKeyboard(userRow.provider || 'opencode'),
+      await sendSafeText(chatId, lines.join('\n'), {
+        reply_markup: buildProvidersKeyboard(userRow.provider || 'opencode', statusMap),
       });
       return true;
     }
@@ -321,7 +322,7 @@ export async function handleSlashCommand(msg, userRow) {
       await setActiveProviderAndModel(userRow.tgId, 'custom', model);
       await sendSafeText(
         chatId,
-        `✅ سرویس اختصاصی سازگار با OpenAI ثبت و فعال شد!\n🔗 آدرس: \`${baseUrl}\n🧠 مدل: \`${model}\``,
+        `✅ سرویس اختصاصی سازگار با OpenAI ثبت و فعال شد!\n🔗 آدرس: \`${baseUrl}\`\n🧠 مدل: \`${model}\``,
       );
       return true;
     }
@@ -359,7 +360,8 @@ export async function handleSlashCommand(msg, userRow) {
       return true;
     }
 
-    case '/setghtoken': {
+    case '/setghtoken':
+    case '/setgithub': {
       if (!argText || argText.length < 10) {
         await sendSafeText(chatId, '⚠️ لطفاً توکن GitHub را وارد کنید:\n`/setghtoken ghp_...`');
         return true;
@@ -381,7 +383,7 @@ export async function handleSlashCommand(msg, userRow) {
       if (!argText.startsWith('https://')) {
         await sendSafeText(
           chatId,
-          '⚠️ آدرس HTTPS مینی‌اپ (خروجی دستور `npx tgcloud deploy`) را وارد کنید:\n`/setminiapp https://...`',
+          '⚠️ آدرس HTTPS مینی‌اپ (خروجی دستور `npm run deploy`) را وارد کنید:\n`/setminiapp https://...`',
         );
         return true;
       }
@@ -449,8 +451,7 @@ export async function handleSlashCommand(msg, userRow) {
         lines.push('');
         lines.push(`🧠 مدل پیش‌فرض: \`${spec.defaultModel}\``);
         lines.push(`🔑 نیاز به کلید: ${help.keyless ? '❌ خیر (رایگان)' : '✅ بله'}`);
-        await sendSafeText(chatId, lines.join('
-'));
+        await sendSafeText(chatId, lines.join('\n'));
         return true;
       }
 
@@ -474,8 +475,7 @@ export async function handleSlashCommand(msg, userRow) {
       allLines.push('');
       allLines.push('🔑 ثبت کلید: `/setkey <provider_id> <API_KEY>`');
       allLines.push('🌐 انتخاب سرویس: `/provider <provider_id>`');
-      await sendSafeText(chatId, allLines.join('
-'));
+      await sendSafeText(chatId, allLines.join('\n'));
       return true;
     }
 
@@ -594,7 +594,7 @@ export async function handleSlashCommand(msg, userRow) {
         await api.editMessageText({
           chat_id: chatId,
           message_id: waitMsg.message_id,
-          text: `✅ ریپازیتوری ${res.repo} (شاخه ${res.branch}) با موفقیت وارد پروژه ${activeProject} شد!\n📄 تعداد فایل‌ها: ${res.importedFiles}`,
+          text: `✅ ریپازیتوری ${res.repo} (شاخه ${res.branch}) با موفقیت وارد پروژه ${activeProject} شد!\n📄 تعداد فایل‌ها: ${res.importedCount}`,
         });
       } catch (err) {
         await api.editMessageText({
@@ -618,20 +618,22 @@ export async function handleSlashCommand(msg, userRow) {
       const repo = parts[0];
       const commitMessage = parts.slice(1).join(' ') || `Update ${activeProject} from Ahwaz Agent`;
       const ghToken = await resolveGithubToken(userRow);
+      const projMeta = await ensureProject(userRow.tgId, activeProject);
+      const targetBranch = projMeta?.githubBranch || 'main';
       const waitMsg = await sendSafeText(chatId, `⏳ در حال Push پروژه \`${activeProject}\` به \`${repo}\`...`);
       try {
         const res = await pushWorkspaceToGithub({
           tgId: userRow.tgId,
           projectName: activeProject,
           repoSpec: repo,
-          branch: 'main',
+          branch: targetBranch,
           commitMessage,
           githubToken: ghToken,
         });
         await api.editMessageText({
           chat_id: chatId,
           message_id: waitMsg.message_id,
-          text: `🚀 پروژه با موفقیت روی GitHub منتشر شد!\n🔗 ${res.commitUrl}\n📄 تعداد فایل‌ها: ${res.filesCommitted}`,
+          text: `🚀 پروژه با موفقیت روی GitHub منتشر شد!\n🔗 ${res.commitUrl}\n📄 تعداد فایل‌ها: ${res.filesPushed}`,
         });
       } catch (err) {
         await api.editMessageText({
@@ -663,7 +665,18 @@ export async function handleSlashCommand(msg, userRow) {
       return true;
     }
 
-    default:
+    default: {
+      if (/^\/[a-z0-9_]+$/i.test(cmdToken)) {
+        if (/key|token|secret/i.test(cmdToken) && argText) {
+          await tryDeleteSecretMessage(chatId, msg.message_id);
+        }
+        await sendSafeText(
+          chatId,
+          `⚠️ دستور \`${cmdToken}\` شناخته نشد. برای مشاهده فهرست کامل دستورات \`/help\` را ارسال کنید.`,
+        );
+        return true;
+      }
       return false;
+    }
   }
 }

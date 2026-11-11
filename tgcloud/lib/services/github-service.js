@@ -50,6 +50,15 @@ export function parseGithubRepoSpec(raw) {
   return `${parts[0]}/${parts[1]}`;
 }
 
+function encodeBranchPath(branch) {
+  return String(branch ?? 'main')
+    .trim()
+    .replace(/^\/+|\/+$/g, '')
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+}
+
 function buildHeaders(githubToken) {
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -83,7 +92,7 @@ export async function importGithubRepoToWorkspace({
   }
 
   const treeRes = await fetch(
-    `https://api.github.com/repos/${ownerRepo}/git/trees/${encodeURIComponent(targetBranch)}?recursive=1`,
+    `https://api.github.com/repos/${ownerRepo}/git/trees/${encodeBranchPath(targetBranch)}?recursive=1`,
     { headers },
   );
   if (!treeRes.ok) {
@@ -134,6 +143,7 @@ export async function importGithubRepoToWorkspace({
     repo: ownerRepo,
     branch: targetBranch,
     importedCount: importedPaths.length,
+    importedFiles: importedPaths.length,
     truncated: candidates.length > limited.length,
     files: importedPaths,
   };
@@ -149,7 +159,7 @@ export async function pushWorkspaceToGithub({
 }) {
   if (!githubToken || !githubToken.trim()) {
     throw new Error(
-      'برای Push به GitHub ابتدا توکن خود را با دستور `/setgithub ghp_...` ثبت کنید.',
+      'برای Push به GitHub ابتدا توکن خود را با دستور `/setghtoken ghp_...` ثبت کنید.',
     );
   }
 
@@ -166,7 +176,7 @@ export async function pushWorkspaceToGithub({
 
   // 1. Resolve current branch HEAD commit SHA
   const refRes = await fetch(
-    `https://api.github.com/repos/${ownerRepo}/git/ref/heads/${encodeURIComponent(branch)}`,
+    `https://api.github.com/repos/${ownerRepo}/git/ref/heads/${encodeBranchPath(branch)}`,
     { headers },
   );
   if (!refRes.ok) {
@@ -225,7 +235,7 @@ export async function pushWorkspaceToGithub({
 
   // 5. Advance branch reference
   const updateRefRes = await fetch(
-    `https://api.github.com/repos/${ownerRepo}/git/refs/heads/${encodeURIComponent(branch)}`,
+    `https://api.github.com/repos/${ownerRepo}/git/refs/heads/${encodeBranchPath(branch)}`,
     {
       method: 'PATCH',
       headers,
@@ -250,5 +260,6 @@ export async function pushWorkspaceToGithub({
     commitSha: createdCommit.sha.slice(0, 7),
     commitUrl: createdCommit.html_url || `https://github.com/${ownerRepo}/commit/${createdCommit.sha}`,
     filesPushed: files.length,
+    filesCommitted: files.length,
   };
 }

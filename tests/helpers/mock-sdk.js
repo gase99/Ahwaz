@@ -35,6 +35,7 @@ export const mockState = {
   apiCalls: [],
   fileStore: new Map(), // file_id -> Uint8Array
   fetchHandler: null,
+  apiInterceptor: null,
   nextMessageId: 100,
 };
 
@@ -42,6 +43,7 @@ export function resetMockSdk() {
   mockState.apiCalls = [];
   mockState.fileStore.clear();
   mockState.fetchHandler = null;
+  mockState.apiInterceptor = null;
   mockState.nextMessageId = 100;
 }
 
@@ -52,6 +54,11 @@ export const api = new Proxy(
       if (typeof prop !== 'string') return undefined;
       return async (params = {}) => {
         mockState.apiCalls.push({ method: prop, params });
+
+        if (typeof mockState.apiInterceptor === 'function') {
+          const custom = await mockState.apiInterceptor(prop, params);
+          if (custom !== undefined) return custom;
+        }
 
         if (prop === 'getFileContent') {
           const fid = typeof params === 'string' ? params : params.file_id;

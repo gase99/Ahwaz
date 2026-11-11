@@ -68,11 +68,14 @@ export function createAgentTools() {
           return { error: `فایل ${args.file_path} در پروژه ${ctx.projectName} پیدا نشد.` };
         }
         const allLines = row.content.split('\n');
-        const start = Math.max(1, Number(args.start_line || 1));
-        const end = Math.min(
-          allLines.length,
-          args.end_line ? Number(args.end_line) : Math.min(allLines.length, start + 499),
-        );
+        const parsedStart = Number(args.start_line);
+        const start = Number.isFinite(parsedStart)
+          ? Math.min(allLines.length, Math.max(1, Math.floor(parsedStart)))
+          : 1;
+        const parsedEnd = Number(args.end_line);
+        const end = Number.isFinite(parsedEnd) && parsedEnd > 0
+          ? Math.min(allLines.length, Math.max(start, Math.floor(parsedEnd)))
+          : Math.min(allLines.length, start + 499);
         const numbered = allLines
           .slice(start - 1, end)
           .map((line, i) => `${start + i}: ${line}`)

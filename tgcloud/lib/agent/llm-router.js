@@ -68,14 +68,23 @@ export function parseInlineToolCalls(rawText) {
     try {
       const parsed = JSON.parse(cleanedJson);
       if (parsed && typeof parsed.name === 'string') {
+        let resolvedArgs = {};
+        if (parsed.args && typeof parsed.args === 'object') {
+          resolvedArgs = parsed.args;
+        } else if (parsed.arguments && typeof parsed.arguments === 'object') {
+          resolvedArgs = parsed.arguments;
+        } else if (typeof parsed.arguments === 'string') {
+          try {
+            const innerArgs = JSON.parse(parsed.arguments);
+            if (innerArgs && typeof innerArgs === 'object') resolvedArgs = innerArgs;
+          } catch {
+            resolvedArgs = {};
+          }
+        }
         toolCalls.push({
           id: `react_call_${Date.now()}_${idx++}`,
           name: parsed.name,
-          args:
-            (parsed.args && typeof parsed.args === 'object' ? parsed.args : null) ||
-            (parsed.arguments && typeof parsed.arguments === 'object'
-              ? parsed.arguments
-              : {}),
+          args: resolvedArgs,
         });
       }
     } catch {
@@ -279,6 +288,11 @@ async function callGeminiNative({ apiKey, model, systemInstruction, turns, decla
   }
 
   const json = await res.json();
+  if (!json?.candidates?.length && json?.promptFeedback?.blockReason) {
+    throw new Error(
+      `پاسخ Google Gemini به دلیل محدودیت ایمنی مسدود شد (${json.promptFeedback.blockReason}).`,
+    );
+  }
   const parts = json?.candidates?.[0]?.content?.parts || [];
   const text = parts
     .filter((p) => !p.thought && typeof p.text === 'string')
@@ -401,7 +415,15 @@ async function callOpenAiCompatible({
         })
     : [];
 
-  const rawContent = typeof msg.content === 'string' ? msg.content : '';
+  const rawContent =
+    typeof msg.content === 'string'
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? msg.content
+            .filter((part) => part && typeof part.text === 'string')
+            .map((part) => part.text)
+            .join('\n')
+        : '';
   if (nativeCalls.length > 0) {
     return {
       text: rawContent.trim(),

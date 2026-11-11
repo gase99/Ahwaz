@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runCodingAgent } from '../tgcloud/lib/agent/coding-agent.js';
+import { buildServerlessSystemPrompt } from '../tgcloud/lib/agent/system-prompt.js';
+import { createAgentTools } from '../tgcloud/lib/agent/tools.js';
 import {
   ensureUser,
   saveUserGeminiKey,
 } from '../tgcloud/lib/services/auth-service.js';
-import { readWorkspaceFile } from '../tgcloud/lib/services/workspace-service.js';
+import {
+  readWorkspaceFile,
+  writeWorkspaceFile,
+} from '../tgcloud/lib/services/workspace-service.js';
 import { extractZipBytes } from '../tgcloud/lib/services/zip-service.js';
 import { mockState, resetMockSdk } from './helpers/mock-sdk.js';
 import { resetMockDatabase } from './helpers/mock-sdk-db.js';
@@ -149,5 +154,33 @@ describe('Telegram Serverless CodingAgent (Gemini REST + SQLite Workspace + V8 S
         content: 'export function fib(n) { return n <= 1 ? n : fib(n - 1) + fib(n - 2); }\n',
       },
     ]);
+  });
+
+  it('aligns system prompt tool names with declared tools and handles invalid read_file line numbers safely', async () => {
+    const tools = createAgentTools();
+    const declaredNames = new Set(tools.map((t) => t.declaration.name));
+    const sysPrompt = buildServerlessSystemPrompt({
+      projectName: 'default',
+      providerTitle: '🆓 OpenCode Zen',
+      model: 'big-pickle',
+      fileManifest: [],
+      githubConfigured: false,
+    });
+
+    expect(declaredNames.has('search_code')).toBe(true);
+    expect(declaredNames.has('send_file_to_chat')).toBe(true);
+    expect(sysPrompt).toContain('search_code');
+    expect(sysPrompt).toContain('send_file_to_chat');
+    expect(sysPrompt).not.toContain('search_files');
+    expect(sysPrompt).not.toContain('send_workspace_file');
+
+    await writeWorkspaceFile(7002, 'default', 'demo.js', 'line1\nline2\nline3');
+    const readTool = tools.find((t) => t.declaration.name === 'read_file');
+    const res = await readTool.execute(
+      { file_path: 'demo.js', start_line: 'not-a-number', end_line: -5 },
+      { tgId: 7002, projectName: 'default' },
+    );
+    expect(res.output.shown_range).toBe('1-3');
+    expect(res.output.content).toContain('1: line1');
   });
 });

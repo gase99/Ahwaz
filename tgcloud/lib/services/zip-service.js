@@ -130,16 +130,24 @@ async function inflateRawBytes(compressedBytes) {
   }
   const ds = new DecompressionStream('deflate-raw');
   const writer = ds.writable.getWriter();
-  await writer.write(compressedBytes);
-  await writer.close();
-
   const reader = ds.readable.getReader();
   const chunks = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
+
+  // Read and write concurrently to avoid TransformStream highWaterMark deadlock on large files
+  const readTask = (async () => {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+  })();
+
+  const writeTask = (async () => {
+    await writer.write(compressedBytes);
+    await writer.close();
+  })();
+
+  await Promise.all([writeTask, readTask]);
   return concatUint8Arrays(chunks);
 }
 
@@ -181,6 +189,10 @@ export async function extractZipBytes(zipBytes) {
     const commentLen = dv.getUint16(cdOffset + 32, true);
     const localHeaderOffset = dv.getUint32(cdOffset + 42, true);
 
+    if (cdOffset + 46 + nameLen > u8.byteLength) {
+      throw new Error('ساختار فهرست مرکزی فایل ZIP ناقص یا آسیب‌دیده است.');
+    }
+
     const rawName = bytesToUtf8(u8.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
     cdOffset += 46 + nameLen + extraLen + commentLen;
 
@@ -203,9 +215,16 @@ export async function extractZipBytes(zipBytes) {
 
     if (uncompSize > 1_500_000) continue; // skip >1.5MB large files
 
+    if (localHeaderOffset + 30 > u8.byteLength) {
+      throw new Error(`هدر فایل داخلی ZIP نامعتبر است: ${normalizedName}`);
+    }
+
     const lNameLen = dv.getUint16(localHeaderOffset + 26, true);
     const lExtraLen = dv.getUint16(localHeaderOffset + 28, true);
     const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
+    if (dataStart + compSize > u8.byteLength) {
+      throw new Error(`داده‌های فایل داخلی ZIP ناقص است: ${normalizedName}`);
+    }
     const rawSlice = u8.subarray(dataStart, dataStart + compSize);
 
     let fileBytes;

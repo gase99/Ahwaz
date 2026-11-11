@@ -108,6 +108,7 @@ export default async function handleMessage(msg) {
       .filter(Boolean)
       .join('\n');
 
+    if (!statusMsg?.message_id) return;
     try {
       await api.editMessageText({
         chat_id: chatId,
@@ -128,10 +129,12 @@ export default async function handleMessage(msg) {
       onProgress: updateProgress,
     });
 
-    try {
-      await api.deleteMessage({ chat_id: chatId, message_id: statusMsg.message_id });
-    } catch {
-      // Ignore if unable to delete status placeholder
+    if (statusMsg?.message_id) {
+      try {
+        await api.deleteMessage({ chat_id: chatId, message_id: statusMsg.message_id });
+      } catch {
+        // Ignore if unable to delete status placeholder
+      }
     }
 
     const headerLine = `🌐 ${result.providerBadge} • \`${result.model}\`${
@@ -159,14 +162,18 @@ export default async function handleMessage(msg) {
     }
   } catch (err) {
     const errText = `❌ خطا در اجرای ایجنت:\n${err?.message ?? err}`;
-    try {
-      await api.editMessageText({
-        chat_id: chatId,
-        message_id: statusMsg.message_id,
-        text: errText,
-      });
-    } catch {
-      await sendSafeText(chatId, errText);
+    if (statusMsg?.message_id) {
+      try {
+        await api.editMessageText({
+          chat_id: chatId,
+          message_id: statusMsg.message_id,
+          text: errText,
+        });
+        return;
+      } catch {
+        // Fall back to sending a new message
+      }
     }
+    await sendSafeText(chatId, errText);
   }
 }
