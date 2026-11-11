@@ -1,0 +1,290 @@
+<!doctype html>
+<!--
+  Live design preview for the redesigned "مدل‌ها و کلیدها" screen.
+  It imports the REAL components + stylesheet from miniapp/src and feeds them
+  mock provider snapshots, so what you see is exactly what the Mini App renders.
+  Serve the repo root over HTTP (e.g. `npx serve .`) and open /docs/miniapp-models-preview.html
+-->
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0A0E17" />
+    <title>پیش‌نمایش — مدیریت مدل‌ها و کلیدها</title>
+    <link rel="stylesheet" href="../miniapp/src/styles.css" />
+    <style>
+      body {
+        overflow: auto;
+        height: auto;
+      }
+      .preview-frame {
+        max-width: 460px;
+        margin: 0 auto;
+        min-height: 100vh;
+        border-inline: 1px solid rgba(148, 163, 184, 0.14);
+        padding-bottom: 40px;
+      }
+      .preview-note {
+        max-width: 460px;
+        margin: 0 auto;
+        padding: 12px;
+        font-size: 11px;
+        color: #8593ab;
+        text-align: center;
+      }
+      .preview-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(10, 14, 23, 0.85);
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        backdrop-filter: blur(14px);
+      }
+      .preview-tabs .tab {
+        flex: 1;
+      }
+      .preview-panel {
+        display: none;
+      }
+      .preview-panel.active {
+        display: block;
+      }
+      .section-wrap {
+        overflow: visible;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="preview-frame">
+      <header class="tg-header">
+        <div class="tg-brand">
+          <div class="tg-brand-name">Ahwaz Code Studio</div>
+          <div class="tg-brand-sub">@tgcloud v2.1 · Telegram Serverless</div>
+        </div>
+        <div class="tg-header-controls">
+          <button type="button" class="conn-badge-btn" id="previewConnBadge">3/9</button>
+        </div>
+      </header>
+
+      <nav class="preview-tabs">
+        <button type="button" class="tab active" data-preview-tab="settings">🧩 مدل‌ها و کلیدها</button>
+        <button type="button" class="tab" data-preview-tab="connections">🔌 اتصال‌ها</button>
+      </nav>
+
+      <div class="preview-panel active" id="preview-settings">
+        <div class="section-wrap">
+          <div class="section-head">
+            <div class="section-title">🧩 مدیریت مدل‌ها و کلیدهای API</div>
+            <div class="card-actions" style="grid-template-columns: auto auto">
+              <button type="button" class="btn btn-xs btn-download">⤓ دانلود تنظیمات</button>
+              <button type="button" class="btn btn-xs btn-ghost">⟳ همگام‌سازی</button>
+            </div>
+          </div>
+          <p class="section-desc">
+            هر سرویس یک کارت مستقل دارد: نشان وضعیت رنگی، کلید ماسک‌شده و اندپوینت در بلوک‌های چپ‌به‌راست
+            مونواسپیس، تاخیر پاسخ و دکمه‌های لمسی تست/کپی. خطاهای خام فقط داخل «جزئیات فنی» جمع شده‌اند.
+          </p>
+          <div id="keysSummaryBanner"></div>
+          <div id="activeModelCard"></div>
+          <div id="providersGrid" class="provider-cards"></div>
+        </div>
+      </div>
+
+      <div class="preview-panel" id="preview-connections">
+        <div class="section-wrap">
+          <div class="section-head">
+            <div class="section-title">🔌 وضعیت اتصال‌ها</div>
+          </div>
+          <div id="connectionsSummary"></div>
+          <div id="connectionsGrid" class="compact-conn-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="preview-note">
+      پیش‌نمایش با داده‌های نمونه — همان کامپوننت‌ها و CSS واقعی مینی‌اپ
+      (<code>miniapp/src/components/*.js</code>)
+    </p>
+
+    <script type="module">
+      import { ApiKeysPanel } from '../miniapp/src/components/ApiKeysPanel.js';
+      import { ActiveModelCard } from '../miniapp/src/components/ActiveModelCard.js';
+      import { ConnectionsDashboard } from '../miniapp/src/components/ConnectionsDashboard.js';
+
+      const now = Math.floor(Date.now() / 1000);
+
+      const providers = [
+        {
+          id: 'opencode',
+          title: 'OpenCode Zen (مدل‌های رایگان OpenCode)',
+          shortBadge: '🆓 OpenCode Zen',
+          protocol: 'openai',
+          defaultBaseUrl: 'https://opencode.ai/zen/v1',
+          requiresKey: false,
+          acceptsOptionalKey: true,
+          requiresBaseUrl: false,
+          isReady: true,
+          status: 'connected',
+          apiKeyConfigured: false,
+          maskedKey: '',
+          baseUrl: null,
+          lastLatencyMs: 412,
+          lastTestedAt: now - 120,
+          lastError: null,
+          defaultModel: 'big-pickle',
+          signupUrl: 'https://opencode.ai/auth',
+          docsUrl: 'https://opencode.ai/docs',
+          models: [{ id: 'big-pickle' }],
+        },
+        {
+          id: 'gemini',
+          title: 'Google Gemini (AI Studio)',
+          shortBadge: '✨ Google Gemini',
+          protocol: 'gemini',
+          defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          requiresKey: true,
+          requiresBaseUrl: false,
+          isReady: true,
+          status: 'connected',
+          apiKeyConfigured: true,
+          maskedKey: 'AIza••••••••••9f3c',
+          baseUrl: null,
+          lastLatencyMs: 480,
+          lastTestedAt: now - 900,
+          lastError: null,
+          defaultModel: 'gemini-2.5-pro',
+          signupUrl: 'https://aistudio.google.com/apikey',
+          docsUrl: 'https://ai.google.dev/gemini-api/docs',
+          models: [{ id: 'gemini-2.5-pro' }],
+        },
+        {
+          id: 'groq',
+          title: 'Groq Free LPU API (فوق‌سریع و رایگان)',
+          shortBadge: '⚡ Groq Free',
+          protocol: 'openai',
+          defaultBaseUrl: 'https://api.groq.com/openai/v1',
+          requiresKey: true,
+          requiresBaseUrl: false,
+          isReady: true,
+          status: 'invalid',
+          apiKeyConfigured: true,
+          maskedKey: 'gsk_••••••••••9999',
+          baseUrl: null,
+          lastLatencyMs: 0,
+          lastTestedAt: now - 40,
+          lastError:
+            'سقف لحظه‌ای درخواست‌ها پر شده است (HTTP 429 — Rate Limit). کلید معتبر است اما چند ثانیه دیگر تلاش کنید.',
+          defaultModel: 'llama-3.3-70b-versatile',
+          signupUrl: 'https://console.groq.com/keys',
+          docsUrl: 'https://console.groq.com/docs',
+          models: [{ id: 'llama-3.3-70b-versatile' }],
+        },
+        {
+          id: 'openrouter',
+          title: 'OpenRouter Free Models (مدل‌های :free)',
+          shortBadge: '🌐 OpenRouter Free',
+          protocol: 'openai',
+          defaultBaseUrl: 'https://openrouter.ai/api/v1',
+          requiresKey: true,
+          requiresBaseUrl: false,
+          isReady: true,
+          status: 'invalid',
+          apiKeyConfigured: true,
+          maskedKey: 'sk-o••••••••••8b21',
+          baseUrl: null,
+          lastLatencyMs: 214,
+          lastTestedAt: now - 7200,
+          lastError:
+            'کلید API نامعتبر یا فاقد دسترسی است (HTTP 401). لطفاً کلید سرویس 🌐 OpenRouter Free را بررسی کنید.',
+          defaultModel: 'qwen/qwen3-coder:free',
+          signupUrl: 'https://openrouter.ai/keys',
+          docsUrl: 'https://openrouter.ai/docs',
+          models: [{ id: 'qwen/qwen3-coder:free' }],
+        },
+        {
+          id: 'custom',
+          title: 'Custom Free OpenAI-Compatible API',
+          shortBadge: '🔧 Custom API',
+          protocol: 'openai',
+          defaultBaseUrl: '',
+          requiresKey: false,
+          acceptsOptionalKey: true,
+          requiresBaseUrl: true,
+          isReady: false,
+          status: 'disconnected',
+          apiKeyConfigured: false,
+          maskedKey: '',
+          baseUrl: null,
+          lastLatencyMs: null,
+          lastTestedAt: null,
+          lastError: null,
+          defaultModel: 'auto',
+          signupUrl: null,
+          docsUrl: null,
+          models: [{ id: 'auto' }],
+        },
+      ];
+
+      const providerHelp = [
+        {
+          id: 'gemini',
+          steps: [
+            'به https://aistudio.google.com/apikey بروید و با اکانت Google وارد شوید.',
+            'روی «Create API key» بزنید (Tier رایگان نیازی به کارت بانکی ندارد).',
+            'کلید ساخته‌شده با پیشوند AIza... را کپی کنید.',
+            'کلید را در کارت همین سرویس Paste و «ذخیره و فعال‌سازی» را بزنید.',
+          ],
+          freeModels: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+          links: [
+            { label: 'دریافت کلید', url: 'https://aistudio.google.com/apikey' },
+            { label: 'مستندات', url: 'https://ai.google.dev/gemini-api/docs' },
+          ],
+          note: 'کلید فقط در هدر x-goog-api-key ارسال می‌شود و در URL قرار نمی‌گیرد.',
+        },
+      ];
+
+      const panel = new ApiKeysPanel({
+        summaryContainer: document.getElementById('keysSummaryBanner'),
+        cardsContainer: document.getElementById('providersGrid'),
+        tableContainer: null,
+        onCopy: (value) => navigator.clipboard?.writeText(value).catch(() => {}),
+        onNotify: (m) => console.log(m),
+      });
+      panel.expandedGuides.add('gemini');
+
+      const hero = new ActiveModelCard({
+        container: document.getElementById('activeModelCard'),
+      });
+
+      const renderAll = () => {
+        panel.render({ providers, providerHelp, linksTable: [], activeProvider: 'opencode' });
+        hero.render({ providers, activeProvider: 'opencode', activeModel: 'big-pickle' });
+      };
+      renderAll();
+
+      new ConnectionsDashboard({
+        headerBadgeBtn: document.getElementById('previewConnBadge'),
+        summaryEl: document.getElementById('connectionsSummary'),
+        gridEl: document.getElementById('connectionsGrid'),
+      }).render({ providers, activeProvider: 'opencode', activeModel: 'big-pickle' });
+
+      document.querySelectorAll('[data-preview-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document
+            .querySelectorAll('[data-preview-tab]')
+            .forEach((b) => b.classList.toggle('active', b === btn));
+          const target = btn.dataset.previewTab;
+          document
+            .getElementById('preview-settings')
+            .classList.toggle('active', target === 'settings');
+          document
+            .getElementById('preview-connections')
+            .classList.toggle('active', target === 'connections');
+        });
+      });
+    </script>
+  </body>
+</html>

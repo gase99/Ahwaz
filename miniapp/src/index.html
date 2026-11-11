@@ -4,8 +4,10 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
     />
+    <meta name="theme-color" content="#0A0E17" />
+    <meta name="color-scheme" content="dark" />
     <title>Ahwaz Code Studio — Mini App</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/styles.css" />
@@ -13,7 +15,9 @@
   <body>
     <div class="app-shell">
       <header class="tg-header">
-        <button type="button" class="icon-btn hidden" id="btnHeaderBack" title="بازگشت">‹</button>
+        <button type="button" class="icon-btn hidden" id="btnHeaderBack" title="بازگشت" aria-label="بازگشت">
+          ‹
+        </button>
         <div class="tg-brand">
           <div class="tg-brand-name">Ahwaz Code Studio</div>
           <div class="tg-brand-sub">@tgcloud v2.1 · Telegram Serverless</div>
@@ -24,28 +28,31 @@
             class="conn-badge-btn"
             id="btnHeaderConnections"
             title="مشاهده وضعیت اتصال‌ها"
+            aria-label="وضعیت اتصال‌ها"
           >
-            🔌 0/9
+            0/9
           </button>
-          <button type="button" class="icon-btn" id="btnRefresh" title="همگام‌سازی وضعیت با ربات">
-            🔄
+          <button type="button" class="icon-btn" id="btnRefresh" title="همگام‌سازی وضعیت با ربات" aria-label="همگام‌سازی">
+            ⟳
           </button>
         </div>
       </header>
 
-      <!-- Grouped Model Selector + Search Filter + Live Preview -->
+      <!-- Active model strip: Persian labels + LTR mono technical values -->
       <div class="model-selector-bar">
         <div class="model-selector-inputs">
           <input
             type="search"
             id="modelSearchInput"
             class="model-search-input"
-            placeholder="🔍 فیلتر مدل یا سرویس (مثلاً flash، coder، pickle)..."
+            placeholder="🔍 جست‌وجوی مدل یا سرویس…"
+            aria-label="جست‌وجوی مدل"
           />
           <select
             id="groupedModelSelect"
             class="grouped-model-select"
-            title="انتخاب مدل کدنویسی گروه‌بندی‌شده بر اساس سرویس"
+            title="انتخاب مدل کدنویسی بر اساس سرویس"
+            aria-label="انتخاب مدل"
           ></select>
         </div>
         <div id="modelPreviewBar" class="model-preview-wrap"></div>
@@ -53,8 +60,8 @@
 
       <nav class="tabs" role="tablist">
         <button type="button" class="tab active" data-tab="agent" role="tab">🤖 ایجنت</button>
+        <button type="button" class="tab" data-tab="settings" role="tab">🧩 مدل‌ها و کلیدها</button>
         <button type="button" class="tab" data-tab="connections" role="tab">🔌 اتصال‌ها</button>
-        <button type="button" class="tab" data-tab="settings" role="tab">🔑 کلیدها</button>
         <button type="button" class="tab" data-tab="files" role="tab" aria-label="فایل‌ها">
           📂 فایل‌ها
           <span class="tab-badge" id="tabFilesCount">0</span>
@@ -76,43 +83,61 @@
             <textarea
               id="promptInput"
               rows="2"
-              placeholder="درخواست کدنویسی را بنویسید (مثلاً: یک وب‌اپ مدیریت تسک بساز و تست کن)..."
+              placeholder="درخواست کدنویسی را بنویسید (مثلاً: یک وب‌اپ مدیریت تسک بساز و تست کن)…"
+              aria-label="درخواست کدنویسی"
             ></textarea>
-            <button type="submit" id="btnRunAgent" class="btn-send">
-              اجرا 🚀
-            </button>
+            <button type="submit" id="btnRunAgent" class="btn btn-send">اجرا 🚀</button>
           </form>
         </section>
 
-        <!-- Connections Dashboard Panel (Section 4) -->
+        <!-- API & Model Management Panel -->
+        <section id="panel-settings" class="panel">
+          <div class="section-wrap">
+            <div class="section-head">
+              <div class="section-title">🧩 مدیریت مدل‌ها و کلیدهای API</div>
+              <div class="card-actions" style="grid-template-columns: auto auto">
+                <button type="button" class="btn btn-xs btn-download" id="btnDownloadAllKeys">
+                  ⤓ دانلود تنظیمات
+                </button>
+                <button type="button" class="btn btn-xs btn-ghost" id="btnSyncAllProviders">
+                  ⟳ همگام‌سازی
+                </button>
+              </div>
+            </div>
+
+            <p class="section-desc">
+              هر سرویس یک کارت مستقل دارد: وضعیت اتصال با نشان رنگی، کلید ماسک‌شده و آدرس اندپوینت در بلوک‌های
+              چپ‌به‌راست مونواسپیس، تاخیر پاسخ و دکمه‌های لمسی تست و کپی. کلیدها رمزنگاری‌شده در SQLite ذخیره و با چت
+              تلگرام همگام می‌شوند.
+            </p>
+
+            <!-- stat strip summary -->
+            <div id="keysSummaryBanner"></div>
+
+            <!-- active model hero card -->
+            <div id="activeModelCard"></div>
+
+            <!-- one glass card per provider -->
+            <div id="providersGrid" class="provider-cards"></div>
+
+            <div id="providerLinksTable"></div>
+          </div>
+        </section>
+
+        <!-- Connections Dashboard Panel -->
         <section id="panel-connections" class="panel">
           <div class="section-wrap">
             <div class="section-head">
               <div class="section-title">🔌 وضعیت اتصال‌ها</div>
-              <button type="button" class="btn-ghost-sm" id="btnManageAllKeys">
-                🔑 مدیریت و افزودن کلیدها
+              <button type="button" class="btn btn-xs btn-primary" id="btnManageAllKeys">
+                🔑 مدیریت کلیدها
               </button>
             </div>
             <p class="section-desc">
-              نمای فشرده تمام سرویس‌های هوش مصنوعی، مدل فعال، نتیجه آخرین تست اتصال و دسترسی سریع به تغییر مدل یا قطع اتصال.
+              نمای فشرده همه سرویس‌ها؛ نشان وضعیت، مدل فعال، تاخیر پاسخ و دسترسی سریع به تست، تغییر مدل یا قطع اتصال.
             </p>
             <div id="connectionsSummary"></div>
             <div id="connectionsGrid" class="compact-conn-grid"></div>
-          </div>
-        </section>
-
-        <!-- API Keys Panel (Sections 1 & 2) -->
-        <section id="panel-settings" class="panel">
-          <div class="section-wrap">
-            <div class="section-head">
-              <div class="section-title">🔑 مدیریت کلیدهای API و راهنمای اتصال</div>
-            </div>
-            <p class="section-desc">
-              کلیدهای API به‌صورت امن در دیتابیس ابری SQLite ذخیره می‌شوند، به‌شکل Mask شده نمایش می‌یابند و با چت تلگرام همگام هستند.
-            </p>
-            <div id="keysSummaryBanner"></div>
-            <div id="providersGrid" class="provider-cards"></div>
-            <div id="providerLinksTable"></div>
           </div>
         </section>
 
@@ -120,22 +145,18 @@
         <section id="panel-files" class="panel">
           <div class="panel-toolbar">
             <div class="toolbar-group">
-              <select
-                id="projectSelect"
-                class="select-pill"
-                title="انتخاب پروژه فعال"
-              ></select>
-              <button type="button" id="btnNewProject" class="btn-secondary" title="ساخت پروژه جدید">
+              <select id="projectSelect" class="select-pill" title="انتخاب پروژه فعال" aria-label="پروژه فعال"></select>
+              <button type="button" id="btnNewProject" class="btn btn-xs btn-secondary" title="ساخت پروژه جدید">
                 ➕ پروژه
               </button>
               <span class="file-count-label">فایل‌ها: <b id="fileCount">0</b></span>
             </div>
             <div class="toolbar-group">
-              <button type="button" id="btnCreateFile" class="btn-secondary">📄 فایل جدید</button>
-              <button type="button" id="btnExportZip" class="btn-secondary" title="ارسال آرشیو ZIP به چت">
-                📦 ZIP
+              <button type="button" id="btnCreateFile" class="btn btn-xs btn-secondary">📄 فایل جدید</button>
+              <button type="button" id="btnExportZip" class="btn btn-xs btn-download" title="ارسال آرشیو ZIP به چت">
+                ⤓ ZIP
               </button>
-              <button type="button" id="btnRefreshFiles" class="btn-ghost" title="بروزرسانی">🔄</button>
+              <button type="button" id="btnRefreshFiles" class="btn btn-xs btn-ghost" title="بروزرسانی">⟳</button>
             </div>
           </div>
           <ul id="fileList" class="file-list"></ul>
@@ -144,16 +165,11 @@
         <!-- Code Editor Panel -->
         <section id="panel-editor" class="panel panel-mainbtn">
           <div class="editor-header">
-            <button type="button" class="icon-btn" id="btnEditorBack" title="بازگشت">‹</button>
-            <input
-              id="editorPath"
-              type="text"
-              dir="ltr"
-              placeholder="src/index.js"
-            />
+            <button type="button" class="icon-btn" id="btnEditorBack" title="بازگشت" aria-label="بازگشت">‹</button>
+            <input id="editorPath" type="text" dir="ltr" placeholder="src/index.js" aria-label="مسیر فایل" />
             <div class="editor-btns">
-              <button type="button" id="btnDeleteFile" class="btn-danger">🗑️</button>
-              <button type="button" id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
+              <button type="button" id="btnDeleteFile" class="btn btn-xs btn-danger" aria-label="حذف فایل">🗑️</button>
+              <button type="button" id="btnSaveFile" class="btn btn-xs btn-primary">💾 ذخیره</button>
             </div>
           </div>
           <textarea
@@ -161,7 +177,7 @@
             class="code-area"
             dir="ltr"
             spellcheck="false"
-            placeholder="// فایلی را انتخاب کنید یا یک فایل جدید بسازید..."
+            placeholder="// فایلی را انتخاب کنید یا یک فایل جدید بسازید…"
           ></textarea>
         </section>
 
@@ -169,10 +185,11 @@
         <section id="panel-help" class="panel">
           <div class="section-wrap">
             <div class="section-head">
-              <div class="section-title">📘 راهنمای دستورات چت تلگرام و مینی‌اپ</div>
+              <div class="section-title">📘 راهنمای دستورات چت و مینی‌اپ</div>
             </div>
             <p class="section-desc">
-              تمامی تنظیمات بین مینی‌اپ و چت تلگرام به‌طور دوطرفه همگام هستند. راهنمای گام‌به‌گام هر سرویس نیز در تب «🔑 کلیدها» در دسترس است.
+              تمام تنظیمات بین مینی‌اپ و چت تلگرام دوطرفه همگام هستند. راهنمای گام‌به‌گام هر سرویس داخل همان کارت
+              سرویس، در بخش «راهنمای اتصال» قرار دارد.
             </p>
             <div id="helpGrid" class="help-cards"></div>
 
@@ -180,9 +197,9 @@
               <div class="section-title">🤖 دستورات ربات تلگرام</div>
               <ul class="cmd-list">
                 <li><code>/start</code> — داشبورد اصلی و وضعیت سرویس‌ها</li>
-                <li><code>/keys</code> — مشاهده وضعیت کلیدهای ذخیره‌شده با دکمه‌های شیشه‌ای تست و حذف</li>
+                <li><code>/keys</code> — وضعیت کلیدهای ذخیره‌شده با دکمه‌های شیشه‌ای تست و حذف</li>
                 <li><code>/model</code> — منوی شیشه‌ای گروه‌بندی‌شده انتخاب مدل</li>
-                <li><code>/model list</code> — گزارش متنی همه سرویس‌ها و مدل‌ها به همراه وضعیت کلید (✅/❌)</li>
+                <li><code>/model list</code> — گزارش متنی همه سرویس‌ها و مدل‌ها با وضعیت کلید</li>
                 <li><code>/model &lt;model_id&gt;</code> — تغییر مستقیم مدل کدنویسی</li>
                 <li><code>/provider &lt;سرویس&gt;</code> — انتخاب سرویس هوش مصنوعی</li>
                 <li><code>/setkey [سرویس] &lt;KEY&gt;</code> — ثبت امن کلید API (حذف خودکار پیام حاوی کلید)</li>
@@ -191,15 +208,11 @@
                 <li><code>/setcustom &lt;URL&gt; [KEY] [MODEL]</code> — اتصال به سرویس سازگار با OpenAI</li>
                 <li><code>/guide [سرویس]</code> — راهنمای کامل اتصال و مدل‌های رایگان هر سرویس</li>
                 <li>
-                  <code>/project &lt;name&gt;</code> ·
-                  <code>/files</code> ·
-                  <code>/zip</code> ·
-                  <code>/clear</code> ·
-                  <code>/status</code> — مدیریت پروژه
+                  <code>/project &lt;name&gt;</code> · <code>/files</code> · <code>/zip</code> ·
+                  <code>/clear</code> · <code>/status</code> — مدیریت پروژه
                 </li>
                 <li>
-                  <code>/ghclone &lt;repo&gt;</code> ·
-                  <code>/ghpush &lt;repo&gt; &lt;پیام&gt;</code> — اتصال به GitHub
+                  <code>/ghclone &lt;repo&gt;</code> · <code>/ghpush &lt;repo&gt; &lt;پیام&gt;</code> — اتصال به GitHub
                 </li>
               </ul>
               <p class="cmd-note">
@@ -213,8 +226,7 @@
               <div class="section-title">📞 پشتیبانی و ارتباط</div>
               <ul>
                 <li>
-                  توسعه‌دهنده:
-                  <b>عباس کروشاد</b> —
+                  توسعه‌دهنده: <b>عباس کروشاد</b> —
                   <a href="https://t.me/webxplusx" target="_blank" rel="noopener">@webxplusx در تلگرام</a>
                 </li>
                 <li>
@@ -232,7 +244,7 @@
       </main>
     </div>
 
-    <div id="toast" class="toast hidden"></div>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

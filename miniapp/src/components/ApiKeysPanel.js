@@ -2,17 +2,25 @@ import {
   escapeHtml,
   formatRelativeTimeFa,
   getProviderLogo,
-  renderConnectionBadgeHtml,
-  resolveUiConnectionState,
-  summarizeProviderCounts,
+  isRateLimitError,
+  resolveProviderStatus,
+  summarizeProviderStatuses,
 } from './ProviderCatalog.js';
+import { parseProviderError, shortenText } from './error-presenter.js';
+import { downloadJson, downloadText, safeFileSlug } from './download.js';
+import { icon } from './icons.js';
 
 /**
- * Renders and manages the "🔑 کلیدهای API" panel:
- * - Section 1.2: Overall summary banner
- * - Section 1.1: Per-provider key cards (masked key, password + eye toggle, test spinner, save, delete, direct signup link)
- * - Section 2.1: Smooth collapsible Accordion guide per provider
- * - Section 1.3: Reference links table at the bottom
+ * Section 1: "API & Models" management screen.
+ *
+ * Layout contract
+ * - One glassmorphic `.provider-card` per provider (module-level, fully isolated).
+ * - Persian labels stay RTL; every technical value (masked key, HTTP status, endpoint
+ *   URL, latency) is rendered inside an explicitly `dir="ltr"` monospace block.
+ * - Status is always a badge (green / amber / red / grey) — never a sentence blob.
+ * - Actions are thumb-sized (≥40px) and live inside the card.
+ * - Raw error strings never leak into the default view: they sit inside a
+ *   collapsed <details> block labelled «جزئیات فنی».
  */
 export class ApiKeysPanel {
   constructor({
@@ -23,6 +31,10 @@ export class ApiKeysPanel {
     onDeleteKey,
     onTestKey,
     onSyncModels,
+    onActivateProvider,
+    onCopy,
+    onNotify,
+    onDownloadAll,
   }) {
     this.summaryContainer = summaryContainer;
     this.cardsContainer = cardsContainer;
@@ -31,309 +43,585 @@ export class ApiKeysPanel {
     this.onDeleteKey = onDeleteKey;
     this.onTestKey = onTestKey;
     this.onSyncModels = onSyncModels;
+    this.onActivateProvider = onActivateProvider;
+    this.onCopy = onCopy;
+    this.onNotify = onNotify;
+    this.onDownloadAll = onDownloadAll;
 
     this.expandedGuides = new Set();
     this.testingProviders = new Set();
+    this.editingProviders = new Set();
     this.lastInlineResults = new Map(); // providerId -> { ok, message }
 
     this.bindEvents();
   }
 
   setInlineResult(providerId, result) {
-    this.lastInlineResults.set(providerId, result);
+    if (result) this.lastInlineResults.set(providerId, result);
+    else this.lastInlineResults.delete(providerId);
+  }
+
+  setEditing(providerId, editing = true) {
+    if (editing) this.editingProviders.add(providerId);
+    else this.editingProviders.delete(providerId);
   }
 
   render({ providers = [], providerHelp = [], linksTable = [], activeProvider = 'opencode' }) {
     this.lastRenderArgs = { providers, providerHelp, linksTable, activeProvider };
     const helpMap = new Map(providerHelp.map((h) => [h.id, h]));
 
-    this.renderSummaryBanner(providers);
+    this.renderSummary(providers, activeProvider);
     this.renderProviderCards(providers, helpMap, activeProvider);
     this.renderReferenceTable(linksTable);
   }
 
-  renderSummaryBanner(providers) {
+  /* ───────────────────────────── summary ───────────────────────────── */
+
+  renderSummary(providers, activeProvider) {
     if (!this.summaryContainer) return;
-    const stats = summarizeProviderCounts(providers);
-
-    const activeNames = stats.connected.length
-      ? stats.connected.map((p) => escapeHtml(p.shortBadge || p.title)).join('، ')
-      : 'هیچ سرویسی فعال نیست';
-
-    const invalidLine = stats.invalid.length
-      ? `<div class="summary-line summary-warn">⚠️ <b>نیاز به بررسی:</b> ${stats.invalid
-          .map((p) => {
-            const err = p.lastError ? ` (${escapeHtml(p.lastError.slice(0, 48))})` : '';
-            return `${escapeHtml(p.shortBadge || p.title)}${err}`;
-          })
-          .join('، ')}</div>`
-      : '';
-
-    const disconnectedLine = stats.disconnected.length
-      ? `<div class="summary-line summary-muted">❌ <b>متصل نشده:</b> ${stats.disconnected
-          .map((p) => escapeHtml(p.shortBadge || p.title))
-          .join('، ')}</div>`
-      : '<div class="summary-line summary-ok">🎉 تمام ۹ سرویس هوش مصنوعی متصل و آماده به کار هستند!</div>';
+    const stats = summarizeProviderStatuses(providers);
+    const activeSpec = providers.find((p) => p.id === activeProvider);
+    const activeStatus = activeSpec ? resolveProviderStatus(activeSpec) : null;
 
     this.summaryContainer.innerHTML = `
-      <div class="keys-summary-banner">
-        <div class="summary-title">🔌 کلیدها و سرویس‌های متصل: <b>${stats.connected.length} از ${stats.total}</b></div>
-        <div class="summary-line summary-ok">✅ <b>فعال:</b> ${activeNames}</div>
-        ${invalidLine}
-        ${disconnectedLine}
+      <div class="stat-strip" role="group" aria-label="خلاصه وضعیت سرویس‌ها">
+        <div class="stat-tile ok">
+          <span class="stat-value">${stats.connected.length}<span class="stat-value stat-value-sub">/${stats.total}</span></span>
+          <span class="stat-label">متصل و آماده</span>
+        </div>
+        <div class="stat-tile warn">
+          <span class="stat-value">${stats.limited.length}</span>
+          <span class="stat-label">محدودیت موقت</span>
+        </div>
+        <div class="stat-tile err">
+          <span class="stat-value">${stats.error.length + stats.standby.length}</span>
+          <span class="stat-label">نیازمند تنظیم</span>
+        </div>
+        <div class="stat-tile muted">
+          <span class="stat-value stat-value-sub is-accent" dir="ltr">${escapeHtml(
+            activeSpec ? activeSpec.id : '—',
+          )}</span>
+          <span class="stat-label">سرویس فعال${
+            activeStatus ? ` · ${escapeHtml(activeStatus.shortLabel)}` : ''
+          }</span>
+        </div>
       </div>
     `;
   }
+
+  /* ───────────────────────────── cards ───────────────────────────── */
 
   renderProviderCards(providers, helpMap, activeProvider) {
     if (!this.cardsContainer) return;
     this.cardsContainer.innerHTML = '';
 
-    for (const spec of providers) {
+    const activeFirst = [...providers].sort((a, b) => {
+      const rank = (spec) => {
+        if (spec.id === activeProvider) return 0;
+        const kind = resolveProviderStatus(spec).kind;
+        return kind === 'connected' ? 1 : kind === 'limited' ? 2 : kind === 'error' ? 3 : 4;
+      };
+      return rank(a) - rank(b);
+    });
+
+    for (const spec of activeFirst) {
       const help = helpMap.get(spec.id) || {};
       const isSelected = spec.id === activeProvider;
       const isTesting = this.testingProviders.has(spec.id);
       const isGuideOpen = this.expandedGuides.has(spec.id);
-      const uiState = resolveUiConnectionState(spec);
+      const isEditing = this.editingProviders.has(spec.id);
+      const status = resolveProviderStatus(spec);
       const inlineResult = this.lastInlineResults.get(spec.id);
 
       const card = document.createElement('div');
-      card.className = `provider-card state-${uiState}${isSelected ? ' active' : ''}`;
+      card.className = `provider-card state-${status.tone === 'err' ? 'invalid' : status.kind}${
+        isSelected ? ' is-active' : ''
+      }`;
       card.id = `key-card-${spec.id}`;
       card.dataset.providerCard = spec.id;
+      card.dataset.providerStatus = status.kind;
+
       card.innerHTML = this.buildCardInnerHtml(spec, help, {
         isSelected,
         isTesting,
         isGuideOpen,
-        uiState,
+        isEditing,
+        status,
         inlineResult,
       });
       this.cardsContainer.appendChild(card);
     }
   }
 
-  buildCardInnerHtml(spec, help, { isSelected, isTesting, isGuideOpen, uiState, inlineResult }) {
+  buildCardInnerHtml(
+    spec,
+    help,
+    { isSelected, isTesting, isGuideOpen, isEditing, status, inlineResult },
+  ) {
     const logo = getProviderLogo(spec);
-    const badgeHtml = renderConnectionBadgeHtml(spec);
+    const subtitleParts = [
+      `<span class="mono ltr">${escapeHtml(spec.id)}</span>`,
+      `<span class="mono badge badge-muted badge-mono">${escapeHtml(
+        String(spec.protocol || 'openai').toUpperCase(),
+      )}</span>`,
+    ];
+    if (spec.requiresBaseUrl) subtitleParts.push('<span>نیازمند Base URL</span>');
+    else if (!spec.requiresKey) subtitleParts.push('<span>بدون نیاز به کلید</span>');
 
-    // Masked key or keyless empty-state notice
-    let keyStateInfoHtml = '';
+    const badges = [
+      `<span class="badge badge-${status.tone}"><span class="dot dot-${status.tone}"></span>${escapeHtml(
+        status.label,
+      )}</span>`,
+    ];
+    if (isSelected) badges.push('<span class="badge badge-accent">سرویس فعال</span>');
+
+    const card = `
+      <div class="card-head">
+        <div class="card-identity">
+          <span class="card-logo" aria-hidden="true">${escapeHtml(logo)}</span>
+          <div class="card-titles">
+            <div class="card-title">${escapeHtml(spec.shortBadge || spec.title)}</div>
+            <div class="card-subtitle">${subtitleParts.join('<span class="sep">·</span>')}</div>
+          </div>
+        </div>
+        <div class="card-badges">${badges.join('')}</div>
+      </div>
+
+      ${this.buildTechRowsHtml(spec, status)}
+      ${this.buildFeedbackHtml(spec, status, inlineResult)}
+      ${
+        isEditing
+          ? this.buildEditFormHtml(spec)
+          : this.buildActionsHtml(spec, { isSelected, isTesting, status })
+      }
+      ${this.buildFooterHtml(spec, help, isGuideOpen)}
+      ${this.buildGuideHtml(spec, help, isGuideOpen)}
+    `;
+
+    return card;
+  }
+
+  /* ─────────────────── technical data (strict LTR islands) ─────────── */
+
+  buildTechRowsHtml(spec, status) {
+    const relTime = formatRelativeTimeFa(spec.lastTestedAt);
+    const rows = [];
+
+    // 1) Masked API key — always LTR monospace
     if (spec.maskedKey) {
-      keyStateInfoHtml = `
-        <div class="masked-key-pill" dir="ltr" title="کلید فعلی ذخیره شده در دیتابیس SQLite">
-          🔑 ${escapeHtml(spec.maskedKey)}
+      rows.push(`
+        <div class="tech-row">
+          <span class="tech-label">API KEY</span>
+          <code class="tech-value is-key ltr" title="کلید ذخیره‌شده (ماسک‌شده)">${escapeHtml(
+            spec.maskedKey,
+          )}</code>
+          <button type="button" class="mini-icon-btn" data-action="copy-key" data-provider="${escapeHtml(
+            spec.id,
+          )}" title="کپی کلید ماسک‌شده" aria-label="کپی کلید ماسک‌شده">${icon('copy', 14)}</button>
         </div>
-      `;
-    } else if (!spec.requiresKey && !spec.requiresBaseUrl) {
-      keyStateInfoHtml = `
-        <div class="empty-key-hint">
-          🆓 این سرویس بدون کلید هم کار می‌کند${
-            spec.acceptsOptionalKey ? '؛ برای سقف اختصاصی می‌توانید کلید رایگان ثبت کنید.' : '.'
-          }
+      `);
+    } else {
+      rows.push(`
+        <div class="tech-row">
+          <span class="tech-label">API KEY</span>
+          <span class="tech-value is-empty ltr">${
+            spec.requiresKey ? 'not configured' : 'keyless / optional'
+          }</span>
         </div>
-      `;
-    } else if (uiState === 'disconnected') {
-      keyStateInfoHtml = `
-        <div class="empty-key-hint warn">
-          💡 هنوز کلیدی برای این سرویس ثبت نشده است. از دکمه دریافت کلید یا راهنمای زیر کمک بگیرید.
-        </div>
-      `;
+      `);
     }
 
-    // Last tested timestamp / error info
-    const relTime = formatRelativeTimeFa(spec.lastTestedAt);
-    let testMetaHtml = '';
-    if (inlineResult) {
-      testMetaHtml = `
-        <div class="test-feedback ${inlineResult.ok ? 'ok' : 'err'}">
-          ${inlineResult.ok ? '✅' : '❌'} ${escapeHtml(inlineResult.message)}
-        </div>
-      `;
-    } else if (relTime) {
-      const latencyTxt = spec.lastLatencyMs ? ` (${spec.lastLatencyMs}ms)` : '';
-      if (uiState === 'invalid') {
-        testMetaHtml = `<div class="test-feedback err">⚠️ آخرین تست: ${escapeHtml(relTime)} — ناموفق${
-          spec.lastError ? `: ${escapeHtml(spec.lastError)}` : ''
-        }</div>`;
-      } else if (uiState === 'connected') {
-        testMetaHtml = `<div class="test-feedback ok">✅ آخرین تست: ${escapeHtml(relTime)} — موفق${escapeHtml(latencyTxt)}</div>`;
+    // 2) Endpoint / base URL — LTR monospace
+    const endpoint = spec.baseUrl || spec.defaultBaseUrl || '';
+    rows.push(`
+      <div class="tech-row">
+        <span class="tech-label">ENDPOINT</span>
+        <span class="tech-value is-url ltr" title="${escapeHtml(endpoint || 'در انتظار تنظیم')}">${escapeHtml(
+          endpoint ? shortenText(endpoint, 46) : '—',
+        )}</span>
+        ${
+          endpoint
+            ? `<button type="button" class="mini-icon-btn" data-action="copy-endpoint" data-provider="${escapeHtml(
+                spec.id,
+              )}" title="کپی آدرس" aria-label="کپی آدرس اندپوینت">${icon('copy', 14)}</button>`
+            : ''
+        }
+      </div>
+    `);
+
+    // 3) Latency + last test — numbers isolated LTR
+    const latencyLabel = spec.lastLatencyMs ? `${Math.round(spec.lastLatencyMs)}ms` : '—';
+    rows.push(`
+      <div class="tech-row">
+        <span class="tech-label">LATENCY</span>
+        <span class="tech-value is-latency ltr">${escapeHtml(latencyLabel)}</span>
+        <span class="tech-side fa">${relTime ? `آخرین تست ${escapeHtml(relTime)}` : 'تست‌نشده'}</span>
+      </div>
+    `);
+
+    // 4) HTTP status line — derived from the last raw error only when meaningful
+    if (status.kind === 'error' || status.kind === 'limited') {
+      const parsed = parseProviderError(spec.lastError);
+      if (parsed) {
+        rows.push(`
+          <div class="tech-row">
+            <span class="tech-label">HTTP</span>
+            <span class="tech-value ltr ${
+              parsed.tone === 'warn' ? 'is-limited' : 'is-danger'
+            }">${escapeHtml(parsed.codeLabel)}</span>
+            <span class="tech-side fa">${escapeHtml(parsed.titleFa)}</span>
+          </div>
+        `);
       }
     }
 
-    // Input fields
-    const canAcceptKey = spec.requiresKey || spec.acceptsOptionalKey;
-    const keyPlaceholder = spec.maskedKey
-      ? `${spec.maskedKey} (برای تغییر کلید جدید وارد کنید)`
-      : spec.requiresKey
-        ? 'کلید API را اینجا Paste کنید...'
-        : 'کلید API اختیاری (برای سقف اختصاصی)...';
+    return `<div class="tech-list">${rows.join('')}</div>`;
+  }
 
-    const apiKeyFieldHtml = canAcceptKey
-      ? `
-        <div class="provider-row key-input-wrapper">
-          <input
-            type="password"
-            data-field="apiKey"
-            dir="ltr"
-            autocomplete="off"
-            placeholder="${escapeHtml(keyPlaceholder)}"
-          />
-          <button
-            type="button"
-            class="key-toggle"
-            data-action="toggle-mask"
-            title="نمایش / مخفی کردن کلید"
-          >👁️</button>
+  /* ─────────────────────── structured error / hint ─────────────────── */
+
+  buildFeedbackHtml(spec, status, inlineResult) {
+    if (inlineResult) {
+      const parsed = inlineResult.ok ? null : parseProviderError(inlineResult.message);
+      if (inlineResult.ok) {
+        return `
+          <div class="alert alert-ok">
+            <div class="alert-top">
+              ${icon('check', 14)}
+              <span class="alert-title">اتصال با موفقیت برقرار شد</span>
+              <span class="alert-code ltr">${escapeHtml(
+                formatLatencyOnly(inlineResult.message) || 'HTTP 200',
+              )}</span>
+            </div>
+            <div class="alert-hint fa">کلید و اندپوینت این سرویس سالم هستند.</div>
+          </div>
+        `;
+      }
+      return this.buildErrorAlertHtml(parsed, inlineResult.message);
+    }
+
+    if (status.kind === 'error' || status.kind === 'limited') {
+      const parsed = parseProviderError(spec.lastError);
+      if (parsed) return this.buildErrorAlertHtml(parsed, spec.lastError);
+    }
+
+    if (status.kind === 'standby') {
+      const isKeyless = !spec.requiresKey;
+      const message = isKeyless
+        ? 'این سرویس بدون کلید کار می‌کند و آماده فعال‌سازی است.'
+        : 'برای فعال‌سازی، کلید رایگان سرویس را ثبت کنید.';
+      return `
+        <div class="alert alert-warn">
+          <div class="alert-top">
+            ${icon('key', 14)}
+            <span class="alert-title">${escapeHtml(message)}</span>
+          </div>
+          <div class="alert-hint fa">مسیر: «ویرایش کلید» → Paste کلید → «تست اتصال» → «ذخیره و فعال‌سازی».</div>
         </div>
-      `
-      : '';
+      `;
+    }
 
-    const baseUrlFieldHtml = spec.requiresBaseUrl
-      ? `
-        <div class="provider-row">
-          <input
-            type="url"
-            data-field="baseUrl"
-            dir="ltr"
-            value="${escapeHtml(spec.baseUrl || '')}"
-            placeholder="آدرس سرور HTTPS (مثلاً https://router.example.com/v1)"
-          />
+    return '';
+  }
+
+  buildErrorAlertHtml(parsed, rawMessage) {
+    if (!parsed) return '';
+    return `
+      <div class="alert ${parsed.tone === 'warn' ? 'alert-warn' : 'alert-err'}">
+        <div class="alert-top">
+          <span class="alert-title">${escapeHtml(parsed.titleFa)}</span>
         </div>
-      `
-      : '';
+        <div class="alert-hint fa">${escapeHtml(parsed.hintFa)}</div>
+        <details class="raw-details">
+          <summary>جزئیات فنی</summary>
+          <div class="mono-block ltr">${escapeHtml(shortenText(rawMessage, 420))}</div>
+        </details>
+      </div>
+    `;
+  }
 
-    const canDelete = Boolean(spec.apiKeyConfigured || (spec.requiresBaseUrl && spec.baseUrl));
+  /* ───────────────────────────── actions ───────────────────────────── */
+
+  buildActionsHtml(spec, { isSelected, isTesting, status }) {
+    const canRemove = Boolean(
+      spec.apiKeyConfigured || (spec.requiresBaseUrl && spec.baseUrl) || spec.lastTestedAt,
+    );
     const canSyncLive = spec.id === 'opencode' || spec.id === 'openrouter';
+    const primaryLabel = isSelected
+      ? `${icon('pencil', 15)} ویرایش کلید`
+      : `${icon('key', 15)} افزودن کلید`;
 
-    const signupLinkHtml = spec.signupUrl
-      ? `<a class="direct-key-link" href="${escapeHtml(spec.signupUrl)}" target="_blank" rel="noopener">🔑 دریافت کلید رایگان ↗</a>`
-      : `<span class="direct-key-muted">🆓 بدون نیاز به ثبت‌نام کلید</span>`;
+    const downloadBtn = `<button type="button" class="btn btn-sm btn-download" data-action="download-config" data-provider="${escapeHtml(
+      spec.id,
+    )}" title="دانلود فایل تنظیمات این سرویس">${icon('download', 15)} دانلود تنظیمات</button>`;
 
-    // Accordion content (Section 2.1)
-    const stepsHtml = (help.steps || [])
-      .map((s, idx) => `<li>${idx + 1}. ${escapeHtml(s)}</li>`)
-      .join('');
-    const freeModelsList =
-      Array.isArray(help.freeModels) && help.freeModels.length
-        ? help.freeModels
-        : (spec.models || []).map((m) => m.id);
-    const freeModelsHtml = freeModelsList
-      .map((m) => `<li>· <code>${escapeHtml(m)}</code></li>`)
-      .join('');
-    const linksHtml = (help.links || [])
-      .map(
-        (l) =>
-          `<li>· ${escapeHtml(l.label)}: <a href="${escapeHtml(l.url)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(l.url)}</a></li>`,
-      )
-      .join('');
+    const signupBtn = spec.signupUrl
+      ? `<a class="btn btn-sm btn-secondary" href="${escapeHtml(
+          spec.signupUrl,
+        )}" target="_blank" rel="noopener">${icon('external', 15)} دریافت کلید</a>`
+      : '';
 
     return `
-      <div class="provider-head">
-        <div class="provider-info">
-          <div class="provider-name">
-            <span class="provider-logo">${escapeHtml(logo)}</span>
-            <span>${escapeHtml(spec.title)}</span>
-            ${isSelected ? '<span class="active-pill">سرویس فعال</span>' : ''}
+      <div class="card-actions">
+        <button type="button" class="btn btn-sm ${
+          status.kind === 'connected' && !isTesting ? 'btn-secondary' : 'btn-primary'
+        }" data-action="test-key" data-provider="${escapeHtml(spec.id)}" ${
+          isTesting ? 'disabled' : ''
+        }>
+          ${
+            isTesting
+              ? `<span class="spinner"></span> در حال تست…`
+              : `${icon('bolt', 15)} تست اتصال`
+          }
+        </button>
+
+        <button type="button" class="btn btn-sm ${
+          isSelected ? 'btn-secondary' : 'btn-primary'
+        }" data-action="${isSelected ? 'edit-key' : 'activate-provider'}" data-provider="${escapeHtml(
+          spec.id,
+        )}">
+          ${isSelected ? primaryLabel : `${icon('spark', 15)} فعال‌سازی`}
+        </button>
+
+        ${
+          spec.apiKeyConfigured
+            ? `<button type="button" class="btn btn-sm btn-secondary" data-action="copy-key" data-provider="${escapeHtml(
+                spec.id,
+              )}">${icon('copy', 15)} کپی کلید</button>`
+            : `<button type="button" class="btn btn-sm btn-secondary" data-action="edit-key" data-provider="${escapeHtml(
+                spec.id,
+              )}">${primaryLabel}</button>`
+        }
+
+        ${downloadBtn}
+        ${signupBtn}
+
+        ${
+          canSyncLive
+            ? `<button type="button" class="btn btn-xs btn-ghost" data-action="sync-models" data-provider="${escapeHtml(
+                spec.id,
+              )}">${icon('refresh', 14)} مدل‌ها</button>`
+            : ''
+        }
+
+        ${
+          canRemove
+            ? `<button type="button" class="btn btn-xs btn-danger" data-action="delete-key" data-provider="${escapeHtml(
+                spec.id,
+              )}">${icon('trash', 14)} حذف</button>`
+            : ''
+        }
+      </div>
+    `;
+  }
+
+  buildEditFormHtml(spec) {
+    const canAcceptKey = spec.requiresKey || spec.acceptsOptionalKey;
+    const keyPlaceholder = spec.maskedKey
+      ? 'کلید جدید برای جایگزینی…'
+      : spec.requiresKey
+        ? 'sk-... / AIza...'
+        : 'کلید اختیاری (برای سقف اختصاصی)';
+
+    return `
+      <div class="card-form">
+        ${
+          canAcceptKey
+            ? `
+          <label class="field-label" for="key-input-${escapeHtml(spec.id)}">
+            ${icon('key', 13)} کلید API
+            ${spec.requiresKey ? '<span class="req">*</span>' : '<span class="link-muted">(اختیاری)</span>'}
+          </label>
+          <div class="input-wrap">
+            <input
+              id="key-input-${escapeHtml(spec.id)}"
+              type="password"
+              data-field="apiKey"
+              dir="ltr"
+              inputmode="text"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="${escapeHtml(keyPlaceholder)}"
+              value=""
+            />
+            <button
+              type="button"
+              class="mini-icon-btn"
+              data-action="toggle-mask"
+              title="نمایش کلید"
+              aria-label="نمایش یا مخفی‌کردن کلید"
+            >${icon('eye', 14)}</button>
           </div>
-          <div class="provider-meta">${escapeHtml(spec.id)} · ${escapeHtml(spec.protocol)}</div>
-        </div>
-        ${badgeHtml}
-      </div>
+        `
+            : ''
+        }
 
-      ${keyStateInfoHtml}
-      ${testMetaHtml}
+        ${
+          spec.requiresBaseUrl
+            ? `
+          <label class="field-label" for="url-input-${escapeHtml(spec.id)}">
+            ${icon('code', 13)} آدرس سرور (Base URL)
+            <span class="req">*</span>
+          </label>
+          <div class="input-wrap">
+            <input
+              id="url-input-${escapeHtml(spec.id)}"
+              type="url"
+              data-field="baseUrl"
+              dir="ltr"
+              inputmode="url"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="https://router.example.com/v1"
+              value="${escapeHtml(spec.baseUrl || '')}"
+            />
+          </div>
+        `
+            : ''
+        }
 
-      <div class="provider-fields">
-        ${baseUrlFieldHtml}
-        ${apiKeyFieldHtml}
-
-        <div class="key-actions-row">
-          <button
-            type="button"
-            class="btn-test"
-            data-action="test-key"
-            data-provider="${escapeHtml(spec.id)}"
-            ${isTesting ? 'disabled' : ''}
-          >
-            ${
-              isTesting
-                ? '<span class="spinner"></span> در حال تست...'
-                : '⚡ تست اتصال'
-            }
-          </button>
-
-          <button
-            type="button"
-            class="btn-sm"
-            data-action="save-key"
-            data-provider="${escapeHtml(spec.id)}"
-          >
-            💾 ${isSelected ? 'ذخیره' : 'ذخیره و فعال‌سازی'}
-          </button>
-
-          ${
-            canDelete
-              ? `<button
-                  type="button"
-                  class="btn-danger-sm"
-                  data-action="delete-key"
-                  data-provider="${escapeHtml(spec.id)}"
-                  title="حذف کلید ذخیره‌شده"
-                >🗑️ حذف کلید</button>`
-              : ''
-          }
-
-          ${
-            canSyncLive
-              ? `<button
-                  type="button"
-                  class="btn-ghost-sm"
-                  data-action="sync-models"
-                  data-provider="${escapeHtml(spec.id)}"
-                  title="بروزرسانی لیست زنده مدل‌ها از سرور"
-                >🔄 بروزرسانی مدل‌ها</button>`
-              : ''
-          }
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm btn-primary" data-action="save-key" data-provider="${escapeHtml(
+            spec.id,
+          )}">${icon('check', 15)} ذخیره و فعال‌سازی</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-action="cancel-edit" data-provider="${escapeHtml(
+            spec.id,
+          )}">انصراف</button>
         </div>
       </div>
+    `;
+  }
 
-      <div class="card-footer-bar">
-        ${signupLinkHtml}
+  /* ───────────────────────────── footer & guide ────────────────────── */
+
+  buildFooterHtml(spec, help, isGuideOpen) {
+    const signup = spec.signupUrl
+      ? `<a class="link-quiet" href="${escapeHtml(
+          spec.signupUrl,
+        )}" target="_blank" rel="noopener">${icon('external', 13)} دریافت کلید رایگان</a>`
+      : '<span class="link-muted">بدون نیاز به ثبت‌نام</span>';
+
+    const docs = spec.docsUrl
+      ? `<a class="link-quiet" href="${escapeHtml(spec.docsUrl)}" target="_blank" rel="noopener">${icon(
+          'book',
+          13,
+        )} مستندات</a>`
+      : '';
+
+    return `
+      <div class="card-footer">
+        <div class="card-footer-links">${signup}${docs}</div>
         <button
           type="button"
           class="accordion-toggle ${isGuideOpen ? 'open' : ''}"
           data-action="toggle-guide"
           data-provider="${escapeHtml(spec.id)}"
           aria-expanded="${isGuideOpen ? 'true' : 'false'}"
+          aria-controls="guide-${escapeHtml(spec.id)}"
         >
-          <span>📘 راهنمای اتصال و مدل‌ها</span>
-          <span class="chevron">▾</span>
+          <span>راهنمای اتصال</span>
+          <span class="chevron">${icon('chevron', 14)}</span>
         </button>
       </div>
+    `;
+  }
 
-      <div class="guide-accordion ${isGuideOpen ? 'expanded' : ''}">
+  downloadProviderGuide(providerId) {
+    const spec = this.lastRenderArgs?.providers?.find((p) => p.id === providerId);
+    const help = (this.lastRenderArgs?.providerHelp || []).find((h) => h.id === providerId) || {};
+    if (!spec) return;
+
+    const lines = [
+      `# ${spec.shortBadge || spec.title}`,
+      '',
+      `- provider: ${spec.id}`,
+      `- protocol: ${spec.protocol}`,
+      `- endpoint: ${spec.baseUrl || spec.defaultBaseUrl || 'not set'}`,
+      `- default model: ${spec.defaultModel || '-'}`,
+      `- key required: ${spec.requiresKey ? 'yes' : 'no (optional keyless)'}`,
+      '',
+      '## Steps',
+      ...(help.steps || []).map((step, i) => `${i + 1}. ${step}`),
+      '',
+      '## Free models',
+      ...(help.freeModels || []).map((m) => `- ${m}`),
+      '',
+      '## Links',
+      ...(help.links || []).map((l) => `- ${l.label}: ${l.url}`),
+      '',
+      help.note ? `> ${help.note}` : '',
+      '',
+      '> API keys never leave the server (encrypted in SQLite) and are not included in this file.',
+    ];
+
+    downloadText(`ahwaz-${safeFileSlug(spec.id)}-guide.md`, lines.join('\n'));
+    this.onNotify?.(`📥 راهنمای ${spec.shortBadge || spec.id} دانلود شد`);
+  }
+
+  buildGuideHtml(spec, help, isGuideOpen) {
+    const stepsHtml = (help.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join('');
+
+    const freeModels =
+      Array.isArray(help.freeModels) && help.freeModels.length
+        ? help.freeModels
+        : (spec.models || []).map((m) => m.id);
+    const freeModelsHtml = freeModels
+      .map((model) => `<li>${escapeHtml(model)}</li>`)
+      .join('');
+
+    const linksHtml = (help.links || [])
+      .map(
+        (link) => `
+          <div class="guide-link-row">
+            <span class="fa" style="font-size:11px;color:var(--text-dim);flex:0 0 auto">${escapeHtml(
+              link.label,
+            )}</span>
+            <a class="guide-link-url" href="${escapeHtml(link.url)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(
+              link.url,
+            )}</a>
+            <a class="mini-icon-btn" href="${escapeHtml(
+              link.url,
+            )}" target="_blank" rel="noopener" aria-label="باز کردن ${escapeHtml(
+              link.label,
+            )} در مرورگر">${icon('external', 14)}</a>
+          </div>
+        `,
+      )
+      .join('');
+
+    return `
+      <div class="guide-accordion ${isGuideOpen ? 'expanded' : ''}" id="guide-${escapeHtml(
+        spec.id,
+      )}">
         <div class="guide-accordion-inner">
-          <div class="guide-block-title">🔑 نحوه دریافت و اتصال کلید (${escapeHtml(spec.shortBadge)}):</div>
-          <ol class="guide-ol">${stepsHtml}</ol>
-
-          <div class="guide-block-title">📋 مدل‌های رایگان موجود:</div>
-          <ul class="guide-ul" dir="ltr">${freeModelsHtml}</ul>
-
+          ${stepsHtml ? `<div class="guide-block-title">🔑 مراحل دریافت و اتصال کلید</div><ol class="guide-ol">${stepsHtml}</ol>` : ''}
+          ${
+            freeModelsHtml
+              ? `<div class="guide-block-title">📋 مدل‌های رایگان</div><ul class="guide-ul">${freeModelsHtml}</ul>`
+              : ''
+          }
           ${
             linksHtml
-              ? `<div class="guide-block-title">🔗 لینک‌های کاربردی:</div><ul class="guide-ul">${linksHtml}</ul>`
+              ? `<div class="guide-block-title">🔗 لینک‌ها و دانلود مستقیم</div><div class="guide-links">${linksHtml}</div>`
               : ''
           }
-
-          ${
-            help.note
-              ? `<div class="guide-tip">💡 <b>نکته:</b> ${escapeHtml(help.note)}</div>`
-              : ''
-          }
+          ${help.note ? `<div class="guide-tip">💡 ${escapeHtml(help.note)}</div>` : ''}
+          <div class="card-actions">
+            <button type="button" class="btn btn-xs btn-download" data-action="download-guide" data-provider="${escapeHtml(
+              spec.id,
+            )}">${icon('download', 14)} دانلود راهنمای اتصال (.md)</button>
+            <button type="button" class="btn btn-xs btn-secondary" data-action="download-config" data-provider="${escapeHtml(
+              spec.id,
+            )}">${icon('download', 14)} دانلود تنظیمات (.json)</button>
+          </div>
         </div>
       </div>
     `;
   }
+
+  /* ───────────────────────── reference table ──────────────────────── */
 
   renderReferenceTable(linksTable = []) {
     if (!this.tableContainer) return;
@@ -345,12 +633,15 @@ export class ApiKeysPanel {
     const rowsHtml = linksTable
       .map((row) => {
         const keyCell = row.signupUrl
-          ? `<a href="${escapeHtml(row.signupUrl)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(row.signupLabel || 'دریافت کلید')}</a>`
-          : `<span class="muted-cell">${escapeHtml(row.signupLabel || '-')}</span>`;
-
+          ? `<a href="${escapeHtml(row.signupUrl)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(
+              row.signupLabel || 'Get key',
+            )}</a>`
+          : `<span class="muted-cell">—</span>`;
         const docsCell = row.docsUrl
-          ? `<a href="${escapeHtml(row.docsUrl)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(row.docsLabel || 'مستندات')}</a>`
-          : `<span class="muted-cell">${escapeHtml(row.docsLabel || '-')}</span>`;
+          ? `<a href="${escapeHtml(row.docsUrl)}" target="_blank" rel="noopener" dir="ltr">${escapeHtml(
+              row.docsLabel || 'Docs',
+            )}</a>`
+          : `<span class="muted-cell">—</span>`;
 
         return `
           <tr>
@@ -358,7 +649,7 @@ export class ApiKeysPanel {
             <td>${keyCell}</td>
             <td>${docsCell}</td>
             <td class="center-cell">${escapeHtml(row.requiresCard)}</td>
-            <td dir="ltr" class="models-cell">${escapeHtml(row.freeModels)}</td>
+            <td class="models-cell">${escapeHtml(row.freeModels)}</td>
           </tr>
         `;
       })
@@ -385,6 +676,8 @@ export class ApiKeysPanel {
     `;
   }
 
+  /* ───────────────────────────── behaviour ────────────────────────── */
+
   focusProviderCard(providerId, expandGuide = false) {
     if (expandGuide) {
       this.expandedGuides.add(providerId);
@@ -393,9 +686,42 @@ export class ApiKeysPanel {
     const card = document.getElementById(`key-card-${providerId}`);
     if (card) {
       card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (expandGuide) return;
       const keyInput = card.querySelector('[data-field="apiKey"]');
       if (keyInput) setTimeout(() => keyInput.focus(), 220);
     }
+  }
+
+  downloadProviderConfig(providerId) {
+    const spec = this.lastRenderArgs?.providers?.find((p) => p.id === providerId);
+    if (!spec) return;
+    const payload = {
+      provider: spec.id,
+      title: spec.title,
+      protocol: spec.protocol,
+      endpoint: spec.baseUrl || spec.defaultBaseUrl || null,
+      model: spec.defaultModel,
+      credentials: {
+        apiKey: spec.maskedKey ? '***REDACTED***' : null,
+        note: 'کلیدها هرگز در فایل خروجی قرار نمی‌گیرند؛ از صفحه سرویس دوباره بسازید.',
+      },
+      signupUrl: spec.signupUrl,
+      docsUrl: spec.docsUrl,
+      exportedAt: new Date().toISOString(),
+    };
+    downloadJson(`ahwaz-${safeFileSlug(spec.id)}-config.json`, payload);
+    this.onNotify?.(`📥 فایل تنظیمات ${spec.shortBadge || spec.id} دانلود شد`);
+  }
+
+  copyValue(providerId, field) {
+    const spec = this.lastRenderArgs?.providers?.find((p) => p.id === providerId);
+    if (!spec) return;
+    const value = field === 'endpoint' ? spec.baseUrl || spec.defaultBaseUrl : spec.maskedKey;
+    if (!value) {
+      this.onNotify?.('⚠️ مقداری برای کپی وجود ندارد');
+      return;
+    }
+    this.onCopy?.(value, providerId, field);
   }
 
   bindEvents() {
@@ -408,34 +734,74 @@ export class ApiKeysPanel {
       const action = btn.dataset.action;
       const card = btn.closest('[data-provider-card]');
       const providerId = btn.dataset.provider || card?.dataset.providerCard;
+      if (!providerId) return;
 
       if (action === 'toggle-mask' && card) {
         const input = card.querySelector('[data-field="apiKey"]');
-        if (input) {
-          const isPwd = input.type === 'password';
-          input.type = isPwd ? 'text' : 'password';
-          btn.textContent = isPwd ? '🙈' : '👁️';
-        }
+        if (!input) return;
+        const reveal = input.type === 'password';
+        input.type = reveal ? 'text' : 'password';
+        btn.innerHTML = icon(reveal ? 'eyeOff' : 'eye', 14);
+        btn.setAttribute('title', reveal ? 'مخفی‌کردن کلید' : 'نمایش کلید');
         return;
       }
 
-      if (action === 'toggle-guide' && providerId) {
-        if (this.expandedGuides.has(providerId)) {
-          this.expandedGuides.delete(providerId);
-        } else {
-          this.expandedGuides.add(providerId);
-        }
+      if (action === 'toggle-guide') {
+        const open = !this.expandedGuides.has(providerId);
+        if (open) this.expandedGuides.add(providerId);
+        else this.expandedGuides.delete(providerId);
+
         const accordion = card?.querySelector('.guide-accordion');
-        if (accordion) {
-          const open = this.expandedGuides.has(providerId);
-          accordion.classList.toggle('expanded', open);
-          btn.classList.toggle('open', open);
-          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        }
+        if (accordion) accordion.classList.toggle('expanded', open);
+        btn.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
         return;
       }
 
-      if (action === 'test-key' && providerId && this.onTestKey) {
+      if (action === 'edit-key') {
+        this.editingProviders.add(providerId);
+        if (this.lastRenderArgs) this.render(this.lastRenderArgs);
+        setTimeout(() => {
+          document
+            .getElementById(`key-card-${providerId}`)
+            ?.querySelector('[data-field="apiKey"], [data-field="baseUrl"]')
+            ?.focus();
+        }, 60);
+        return;
+      }
+
+      if (action === 'cancel-edit') {
+        this.editingProviders.delete(providerId);
+        if (this.lastRenderArgs) this.render(this.lastRenderArgs);
+        return;
+      }
+
+      if (action === 'copy-key') {
+        this.copyValue(providerId, 'key');
+        return;
+      }
+
+      if (action === 'copy-endpoint') {
+        this.copyValue(providerId, 'endpoint');
+        return;
+      }
+
+      if (action === 'download-config') {
+        this.downloadProviderConfig(providerId);
+        return;
+      }
+
+      if (action === 'download-guide') {
+        this.downloadProviderGuide(providerId);
+        return;
+      }
+
+      if (action === 'activate-provider' && this.onActivateProvider) {
+        await this.onActivateProvider(providerId);
+        return;
+      }
+
+      if (action === 'test-key' && this.onTestKey) {
         const apiKey = card?.querySelector('[data-field="apiKey"]')?.value.trim() || undefined;
         const baseUrl = card?.querySelector('[data-field="baseUrl"]')?.value.trim() || undefined;
         this.testingProviders.add(providerId);
@@ -449,21 +815,27 @@ export class ApiKeysPanel {
         return;
       }
 
-      if (action === 'save-key' && providerId && this.onSaveKey) {
+      if (action === 'save-key' && this.onSaveKey) {
         const apiKey = card?.querySelector('[data-field="apiKey"]')?.value.trim() || undefined;
         const baseUrl = card?.querySelector('[data-field="baseUrl"]')?.value.trim() || undefined;
+        this.editingProviders.delete(providerId);
         await this.onSaveKey({ providerId, apiKey, baseUrl });
         return;
       }
 
-      if (action === 'delete-key' && providerId && this.onDeleteKey) {
+      if (action === 'delete-key' && this.onDeleteKey) {
         await this.onDeleteKey({ providerId });
         return;
       }
 
-      if (action === 'sync-models' && providerId && this.onSyncModels) {
+      if (action === 'sync-models' && this.onSyncModels) {
         await this.onSyncModels({ providerId });
       }
     });
   }
+}
+
+function formatLatencyOnly(message) {
+  const match = String(message ?? '').match(/(\d+)\s*ms/i);
+  return match ? `${match[1]}ms` : '';
 }

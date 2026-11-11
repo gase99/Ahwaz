@@ -3,6 +3,7 @@ import {
   formatConnectionLabelText,
   formatModelOptionLabel,
   getProviderLogo,
+  resolveProviderStatus,
   resolveUiConnectionState,
 } from './ProviderCatalog.js';
 
@@ -123,9 +124,7 @@ export class ModelSelector {
     }
 
     const uiState = resolveUiConnectionState(spec);
-    const statusText = formatConnectionLabelText(spec);
-    const statusClass =
-      uiState === 'connected' ? 'ok' : uiState === 'invalid' ? 'warn' : 'err';
+    const status = resolveProviderStatus(spec);
 
     const fixBtnHtml =
       uiState !== 'connected'
@@ -134,11 +133,14 @@ export class ModelSelector {
 
     this.previewEl.innerHTML = `
       <div class="model-preview-chip">
-        <span>مدل انتخابی: <code dir="ltr">${escapeHtml(activeModel)}</code></span>
-        <span class="sep">|</span>
-        <span>سرویس: <b>${escapeHtml(spec.shortBadge || spec.title)}</b></span>
-        <span class="sep">|</span>
-        <span>وضعیت کلید: <b class="preview-state ${statusClass}">${escapeHtml(statusText)}</b></span>
+        <span class="fa">مدل انتخابی</span>
+        <code class="ltr" dir="ltr">${escapeHtml(activeModel)}</code>
+        <span class="sep" aria-hidden="true"></span>
+        <span class="fa">${escapeHtml(spec.shortBadge || spec.title)}</span>
+        <span class="sep" aria-hidden="true"></span>
+        <span class="badge badge-${status.tone}"><span class="dot dot-${status.tone}"></span>${escapeHtml(
+          status.label,
+        )}</span>
         ${fixBtnHtml}
       </div>
     `;

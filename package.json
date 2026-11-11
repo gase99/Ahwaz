@@ -14,6 +14,7 @@
     "run": "tgcloud run",
     "webhook": "tgcloud webhook",
     "test": "vitest run",
+    "preview": "node scripts/preview-miniapp.mjs",
     "validate:tgcloud": "node scripts/validate-tgcloud.mjs"
   },
   "devDependencies": {
