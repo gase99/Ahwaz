@@ -408,8 +408,13 @@ describe('Telegram Serverless Handlers & Mini App Endpoints End-to-End', () => {
 
     expect(appJs).toContain('function showToast(');
     expect(appJs).toContain('function confirmDialog(');
-    // Ensure providerCardHtml does not wrap a duplicate .provider-card inside renderProviders()
-    const cardClassMatches = appJs.match(/provider-card\$\{active/g) ?? [];
+    // Ensure modular ApiKeysPanel renders a single .provider-card root per card
+    const apiKeysPanelJs = fs.readFileSync(
+      path.resolve('miniapp/src/components/ApiKeysPanel.js'),
+      'utf8',
+    );
+    const cardClassMatches =
+      apiKeysPanelJs.match(/card\.className = `provider-card/g) ?? [];
     expect(cardClassMatches).toHaveLength(1);
   });
 });

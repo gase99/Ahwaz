@@ -17,7 +17,7 @@ function checkJsSyntax(filePath, relLabel) {
   }
 }
 
-function walk(dir, files = []) {
+function walkTgcloud(dir, files = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -25,7 +25,7 @@ function walk(dir, files = []) {
       if (relDir.startsWith('handlers/') || relDir.startsWith('endpoints/')) {
         errors.push(`Forbidden nested directory in flat folder: tgcloud/${relDir}`);
       }
-      walk(full, files);
+      walkTgcloud(full, files);
     } else if (entry.isFile() && entry.name.endsWith('.js')) {
       files.push(full);
     }
@@ -33,7 +33,20 @@ function walk(dir, files = []) {
   return files;
 }
 
-const jsFiles = walk(tgcloudDir);
+function walkAllFiles(dir, files = []) {
+  if (!fs.existsSync(dir)) return files;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkAllFiles(full, files);
+    } else if (entry.isFile()) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+const jsFiles = walkTgcloud(tgcloudDir);
 const allowedBareSpecifiers = new Set(['sdk', 'sdk/db', 'sdk/api', 'sdk/fetch']);
 
 for (const file of jsFiles) {
@@ -76,29 +89,34 @@ if (/\.references\s*\(|foreignKey\s*\(/.test(schemaSource)) {
   errors.push('tgcloud/schema.js: foreignKey() and .references() are forbidden in Telegram Serverless');
 }
 
-// Validate Mini App source syntax, DOM ID references, and built bundle parity
-const miniappJs = path.join(miniappSrcDir, 'app.js');
+// Validate Mini App source syntax (including components/*), DOM ID references, and built bundle parity
 const miniappHtml = path.join(miniappSrcDir, 'index.html');
-if (fs.existsSync(miniappJs) && fs.existsSync(miniappHtml)) {
-  checkJsSyntax(miniappJs, 'miniapp/src/app.js');
-  const appJsSrc = fs.readFileSync(miniappJs, 'utf8');
+if (fs.existsSync(miniappSrcDir) && fs.existsSync(miniappHtml)) {
   const htmlSrc = fs.readFileSync(miniappHtml, 'utf8');
   const htmlIds = new Set(
     Array.from(htmlSrc.matchAll(/\bid=["']([^"']+)["']/g), (m) => m[1]),
   );
-  for (const m of appJsSrc.matchAll(/document\.getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) {
-    if (!htmlIds.has(m[1])) {
-      errors.push(`miniapp/src/app.js: getElementById('${m[1]}') missing in miniapp/src/index.html`);
-    }
-  }
 
-  for (const name of fs.readdirSync(miniappSrcDir)) {
-    const srcContent = fs.readFileSync(path.join(miniappSrcDir, name), 'utf8');
-    const distPath = path.join(miniappDistDir, name);
+  const srcFiles = walkAllFiles(miniappSrcDir);
+  for (const srcFile of srcFiles) {
+    const relFromSrc = path.relative(miniappSrcDir, srcFile).split(path.sep).join('/');
+    const relFromRoot = `miniapp/src/${relFromSrc}`;
+    const srcContent = fs.readFileSync(srcFile, 'utf8');
+
+    if (srcFile.endsWith('.js')) {
+      checkJsSyntax(srcFile, relFromRoot);
+      for (const m of srcContent.matchAll(/document\.getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+        if (!htmlIds.has(m[1])) {
+          errors.push(`${relFromRoot}: getElementById('${m[1]}') missing in miniapp/src/index.html`);
+        }
+      }
+    }
+
+    const distPath = path.join(miniappDistDir, relFromSrc);
     if (!fs.existsSync(distPath)) {
-      errors.push(`miniapp-dist/${name}: missing built file (run npm run build)`);
+      errors.push(`miniapp-dist/${relFromSrc}: missing built file (run npm run build)`);
     } else if (fs.readFileSync(distPath, 'utf8') !== srcContent) {
-      errors.push(`miniapp-dist/${name}: out of sync with miniapp/src/${name} (run npm run build)`);
+      errors.push(`miniapp-dist/${relFromSrc}: out of sync with ${relFromRoot} (run npm run build)`);
     }
   }
 }
@@ -109,4 +127,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`✓ Validated ${jsFiles.length} tgcloud/ V8 modules — 100% Telegram Serverless compliant!`);
+console.log(`✓ Validated ${jsFiles.length} tgcloud/ V8 modules & Mini App bundle — 100% Telegram Serverless compliant!`);
