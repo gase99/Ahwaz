@@ -13,7 +13,7 @@
   <body>
     <div class="app-shell">
       <header class="tg-header">
-        <button class="icon-btn" id="btnHeaderBack" title="بازگشت">‹</button>
+        <button type="button" class="icon-btn hidden" id="btnHeaderBack" title="بازگشت">‹</button>
         <div class="tg-brand">
           <div class="tg-brand-name">Ahwaz Code Studio</div>
           <div class="tg-brand-sub">@tgcloud v2.1 · Telegram Serverless</div>
@@ -25,13 +25,14 @@
             title="انتخاب سرویس هوش مصنوعی"
           ></select>
           <select id="modelSelect" class="select-pill" title="انتخاب مدل"></select>
-          <button class="icon-btn" id="btnRefresh" title="بروزرسانی وضعیت">🔄</button>
+          <button type="button" class="icon-btn" id="btnRefresh" title="بروزرسانی وضعیت">🔄</button>
         </div>
       </header>
 
       <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="agent" role="tab">🤖 ایجنت</button>
+        <button type="button" class="tab active" data-tab="agent" role="tab">🤖 ایجنت</button>
         <button
+          type="button"
           class="tab"
           data-tab="files"
           role="tab"
@@ -40,9 +41,9 @@
           📂 فایل‌ها
           <span class="tab-badge" id="tabFilesCount">0</span>
         </button>
-        <button class="tab" data-tab="editor" role="tab">💻 ویرایشگر</button>
-        <button class="tab" data-tab="settings" role="tab">⚙️ تنظیمات</button>
-        <button class="tab" data-tab="help" role="tab">📘 راهنما</button>
+        <button type="button" class="tab" data-tab="editor" role="tab">💻 ویرایشگر</button>
+        <button type="button" class="tab" data-tab="settings" role="tab">⚙️ تنظیمات</button>
+        <button type="button" class="tab" data-tab="help" role="tab">📘 راهنما</button>
       </nav>
 
       <main class="panels">
@@ -69,8 +70,24 @@
         <!-- Files Panel -->
         <section id="panel-files" class="panel">
           <div class="panel-toolbar">
-            <button id="btnCreateFile" class="btn-secondary">📄 فایل جدید</button>
-            <button id="btnRefreshFiles" class="btn-ghost" title="بروزرسانی">🔄</button>
+            <div class="toolbar-group">
+              <select
+                id="projectSelect"
+                class="select-pill"
+                title="انتخاب پروژه فعال"
+              ></select>
+              <button type="button" id="btnNewProject" class="btn-secondary" title="ساخت پروژه جدید">
+                ➕ پروژه
+              </button>
+              <span class="file-count-label">فایل‌ها: <b id="fileCount">0</b></span>
+            </div>
+            <div class="toolbar-group">
+              <button type="button" id="btnCreateFile" class="btn-secondary">📄 فایل جدید</button>
+              <button type="button" id="btnExportZip" class="btn-secondary" title="ارسال آرشیو ZIP به چت">
+                📦 ZIP
+              </button>
+              <button type="button" id="btnRefreshFiles" class="btn-ghost" title="بروزرسانی">🔄</button>
+            </div>
           </div>
           <ul id="fileList" class="file-list"></ul>
         </section>
@@ -78,7 +95,7 @@
         <!-- Code Editor Panel -->
         <section id="panel-editor" class="panel panel-mainbtn">
           <div class="editor-header">
-            <button class="icon-btn" id="btnEditorBack" title="بازگشت">‹</button>
+            <button type="button" class="icon-btn" id="btnEditorBack" title="بازگشت">‹</button>
             <input
               id="editorPath"
               type="text"
@@ -86,8 +103,8 @@
               placeholder="src/index.js"
             />
             <div class="editor-btns">
-              <button id="btnDeleteFile" class="btn-danger">🗑️</button>
-              <button id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
+              <button type="button" id="btnDeleteFile" class="btn-danger">🗑️</button>
+              <button type="button" id="btnSaveFile" class="btn-accent">💾 ذخیره</button>
             </div>
           </div>
           <textarea
@@ -113,6 +130,7 @@
             <div id="providersGrid" class="provider-cards"></div>
             <div class="settings-footer">
               <button
+                type="button"
                 id="btnSyncOpenCode"
                 class="btn-ghost-sm"
                 title="دریافت لیست زنده مدل‌های رایگان OpenCode"
@@ -162,6 +180,7 @@
                   هر سرویس سازگار با OpenAI
                 </li>
                 <li><code>/model &lt;model_id&gt;</code> — تغییر مدل کدنویسی</li>
+                <li><code>/guide [سرویس]</code> — راهنمای کامل اتصال به سرویس و مدل</li>
                 <li>
                   <code>/project &lt;name&gt;</code> ·
                   <code>/files</code> ·

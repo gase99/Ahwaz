@@ -29,8 +29,8 @@ if (tg) {
   });
 
   tg.MainButton.onClick(() => {
-    if (appState.activeTab === 'agent') {
-      el.btnRunAgent.click();
+    if (appState.activeTab === 'agent' && !el.btnRunAgent.disabled) {
+      el.promptForm.requestSubmit();
     } else if (appState.activeTab === 'editor') {
       el.btnSaveFile.click();
     }
@@ -100,7 +100,7 @@ function classifyError(err) {
       code: 'UNAUTHORIZED',
       title: 'فقط از داخل تلگرام',
       meaning: 'مینی آپ باید از طریق چت ربات تلگرام باز شود (دکمه Code Studio).',
-      fix: 'باز کردن لینک مستقیماً در مرورگر عادی کار نمی‌کند. در چت ربات خود، دکمه «باز کردن Code Studio (Mini App)』 را بزنید.',
+      fix: 'باز کردن لینک مستقیماً در مرورگر عادی کار نمی‌کند. در چت ربات خود، دکمه «باز کردن Code Studio (Mini App)» را بزنید.',
     };
   }
 
@@ -166,6 +166,26 @@ function classifyError(err) {
     meaning: msg || 'خطایی رخ داد.',
     fix: 'متن خطا را کپی کرده و به توسعه‌دهنده (@webxplusx) بفرستید.',
   };
+}
+
+let toastTimer = null;
+function showToast(message, durationMs = 2800) {
+  if (!el.toast) return;
+  el.toast.textContent = String(message ?? '');
+  el.toast.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.toast.classList.add('hidden');
+  }, durationMs);
+}
+
+function confirmDialog(message) {
+  if (tg?.showConfirm) {
+    return new Promise((resolve) => {
+      tg.showConfirm(message, (ok) => resolve(Boolean(ok)));
+    });
+  }
+  return Promise.resolve(window.confirm(message));
 }
 
 function showError(err, blocking = true) {
@@ -261,6 +281,9 @@ function updateMainButton(tab) {
 }
 
 function updateBackButton(tab) {
+  if (el.btnHeaderBack) {
+    el.btnHeaderBack.classList.toggle('hidden', tab === 'agent');
+  }
   if (!tg?.BackButton) return;
   if (tab === 'agent') tg.BackButton.hide();
   else tg.BackButton.show();
@@ -317,7 +340,7 @@ function renderProviders() {
     const active = spec.id === activeProvider;
     const ready = Boolean(spec.isReady);
     const card = document.createElement('div');
-    card.className = 'provider-card';
+    card.className = `provider-card${active ? ' active' : ''}`;
     card.innerHTML = providerCardHtml(spec, active, ready);
     grid.appendChild(card);
   }
@@ -333,58 +356,64 @@ function providerCardHtml(spec, active, ready) {
 
   // Build fields HTML separately so we can insert a key-toggle for password inputs
   let apiKeyHtml = '';
-  if (spec.requiresKey) {
+  if (spec.requiresKey || spec.acceptsOptionalKey) {
     const placeholder = spec.apiKeyConfigured
-      ? 'کلید API (فعلی مخفی است)'
-      : 'کلید API را وارد کنید';
+      ? 'کلید API ثبت‌شده (برای جایگزینی وارد کنید)'
+      : spec.requiresKey
+        ? 'کلید API را وارد کنید'
+        : 'کلید API (اختیاری — برای سقف اختصاصی)';
     apiKeyHtml = `
       <div class="provider-row key-input-wrapper" style="position:relative;">
         <input type="password" data-field="apiKey" dir="ltr" placeholder="${escapeHtml(placeholder)}" />
-        <button class="key-toggle" data-toggle-key="${escapeHtml(spec.id)}" title="نمایش/مخفی کردن کلید">👁️</button>
+        <button type="button" class="key-toggle" data-toggle-key="${escapeHtml(spec.id)}" title="نمایش/مخفی کردن کلید">👁️</button>
       </div>
     `;
   }
 
   let baseUrlHtml = '';
   if (spec.requiresBaseUrl) {
-    baseUrlHtml = `<input type="url" data-field="baseUrl" dir="ltr" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ''}" />`;
+    baseUrlHtml = `<div class="provider-row"><input type="url" data-field="baseUrl" dir="ltr" value="${escapeHtml(spec.baseUrl || '')}" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ' (مثلاً https://router.example.com/v1)'}" /></div>`;
   }
 
-  const modelOptions = spec.models
+  const selectedModelId = active
+    ? appState.activeModel
+    : spec.defaultModel || spec.models?.[0]?.id || '';
+  const models = [...(spec.models || [])];
+  if (selectedModelId && !models.some((m) => m.id === selectedModelId)) {
+    models.unshift({ id: selectedModelId, label: selectedModelId });
+  }
+  const modelOptions = models
     .map(
       (m) =>
         `<option value="${escapeHtml(m.id)}" ${
-          m.id === appState.activeModel ? 'selected' : ''
-        }>${escapeHtml(m.label)}</option>`
+          m.id === selectedModelId ? 'selected' : ''
+        }>${escapeHtml(m.label)}</option>`,
     )
     .join('');
 
   const modelHtml = `<select data-field="model">${modelOptions}</select>`;
 
-  const btnLabel = active ? 'فعال‌سازی و ذخیره' : 'ذخیره برای این سرویس';
-  const btnDisabled = !spec.requiresKey && !spec.requiresBaseUrl && ready;
+  const btnLabel = active ? 'ذخیره تنظیمات این سرویس' : 'فعال‌سازی و ذخیره';
 
   return `
-    <div class="provider-card${active ? ' active' : ''}">
-      <div class="provider-head">
-        <div class="provider-info">
-          <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
-          <div class="provider-meta">${escapeHtml(spec.title)} · ${spec.protocol}</div>
-        </div>
-        ${chip}
+    <div class="provider-head">
+      <div class="provider-info">
+        <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
+        <div class="provider-meta">${escapeHtml(spec.title)} · ${escapeHtml(spec.protocol)}</div>
       </div>
-      ${missing}
-      <div class="provider-fields">
-        ${apiKeyHtml}${baseUrlHtml}
-        <div class="provider-row">${modelHtml}</div>
-        <div class="provider-row"><button class="btn-sm" data-provider="${escapeHtml(
-    spec.id
-  )}"${btnDisabled ? ' disabled' : ''}>${btnLabel}</button></div>
-      </div>
-      <a class="provider-help-link" data-help-provider="${escapeHtml(
-        spec.id
-      )}">📘 راهنمای اتصال به ${escapeHtml(spec.title)}</a>
+      ${chip}
     </div>
+    ${missing}
+    <div class="provider-fields">
+      ${apiKeyHtml}${baseUrlHtml}
+      <div class="provider-row">${modelHtml}</div>
+      <div class="provider-row"><button type="button" class="btn-sm" data-provider="${escapeHtml(
+        spec.id,
+      )}">${btnLabel}</button></div>
+    </div>
+    <a class="provider-help-link" data-help-provider="${escapeHtml(
+      spec.id,
+    )}">📘 راهنمای اتصال به ${escapeHtml(spec.title)}</a>
   `;
 }
 
@@ -427,6 +456,7 @@ el.providersGrid.addEventListener('click', async (e) => {
     };
     try {
       const res = await callServerlessEndpoint('studio', payload);
+      if (Array.isArray(res.providers)) appState.providers = res.providers;
       appState.activeProvider = res.provider;
       appState.activeModel = res.model;
       renderProviderAndModels();
@@ -475,7 +505,9 @@ function helpCardHtml(h) {
     ? (h.links || []).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">🔗 ${escapeHtml(l.label)}</a>`).join(' ')
     : '<span style="color: var(--tg-muted)">بدون لینک ثبت‌نام ثابت</span>';
   const cmds = (h.commands || []).length
-    ? `<div class="help-cmd">${(h.commands || []).join(' · ')}</div>`
+    ? `<div class="help-cmd">${(h.commands || [])
+        .map((c) => escapeHtml(String(c).replace(/^`+|`+$/g, '')))
+        .join(' · ')}</div>`
     : '';
   div.innerHTML = `
     <div class="help-head">
@@ -503,18 +535,24 @@ function renderState(state) {
   appState.files = state.files || [];
 
   renderProviderAndModels();
-  el.tabFilesCount.textContent = String(appState.files.length);
-
-  el.projectSelect.innerHTML = '';
-  for (const proj of appState.projects) {
-    const opt = document.createElement('option');
-    opt.value = proj.name;
-    opt.textContent = `📁 ${proj.name}`;
-    if (proj.name === appState.activeProject) opt.selected = true;
-    el.projectSelect.appendChild(opt);
+  if (el.tabFilesCount) {
+    el.tabFilesCount.textContent = String(appState.files.length);
   }
 
-  el.fileCount.textContent = String(appState.files.length);
+  if (el.projectSelect) {
+    el.projectSelect.innerHTML = '';
+    for (const proj of appState.projects) {
+      const opt = document.createElement('option');
+      opt.value = proj.name;
+      opt.textContent = `📁 ${proj.name}`;
+      if (proj.name === appState.activeProject) opt.selected = true;
+      el.projectSelect.appendChild(opt);
+    }
+  }
+
+  if (el.fileCount) {
+    el.fileCount.textContent = String(appState.files.length);
+  }
   el.fileList.innerHTML = '';
   if (appState.files.length === 0) {
     const empty = document.createElement('li');
@@ -577,6 +615,7 @@ el.providerSelect.addEventListener('change', async () => {
       action: 'setProvider',
       providerId: nextProv,
     });
+    if (Array.isArray(res.providers)) appState.providers = res.providers;
     appState.activeProvider = res.provider;
     appState.activeModel = res.model;
     renderProviderAndModels();
@@ -606,7 +645,6 @@ el.btnSyncOpenCode.addEventListener('click', async () => {
     if (oc && Array.isArray(res.models)) {
       oc.models = res.models;
     }
-    appState.activeProvider = 'opencode';
     renderProviderAndModels();
     renderProviders();
     showSuccess(`${res.models.length} مدل رایگان OpenCode دریافت شد!`);
@@ -616,7 +654,7 @@ el.btnSyncOpenCode.addEventListener('click', async () => {
 });
 
 /*───────────────────────── Projects & files ──*/
-el.projectSelect.addEventListener('change', async () => {
+el.projectSelect?.addEventListener('change', async () => {
   try {
     const data = await callServerlessEndpoint('studio', {
       action: 'switchProject',
@@ -629,7 +667,7 @@ el.projectSelect.addEventListener('change', async () => {
   }
 });
 
-el.btnNewProject.addEventListener('click', async () => {
+el.btnNewProject?.addEventListener('click', async () => {
   const name = window.prompt('نام پروژه جدید (انگلیسی):', 'my-app');
   if (!name) return;
   try {
@@ -672,9 +710,7 @@ el.btnSaveFile.addEventListener('click', async () => {
 el.btnDeleteFile.addEventListener('click', async () => {
   const path = el.editorPath.value.trim();
   if (!path) return;
-  const confirmed = tg?.showConfirm
-    ? await tg.showConfirm(`آیا مطمئن هستید که فایل «${path}» حذف شود؟`)
-    : window.confirm(`پاک کردن فایل ${path}؟`);
+  const confirmed = await confirmDialog(`آیا مطمئن هستید که فایل «${path}» حذف شود؟`);
   if (!confirmed) return;
   try {
     const data = await callServerlessEndpoint('studio', { action: 'deleteFile', path });
@@ -688,7 +724,7 @@ el.btnDeleteFile.addEventListener('click', async () => {
   }
 });
 
-el.btnExportZip.addEventListener('click', async () => {
+el.btnExportZip?.addEventListener('click', async () => {
   try {
     showToast('📦 در حال ارسال ZIP به چت تلگرام...');
     await callServerlessEndpoint('studio', { action: 'exportZipToChat' });
@@ -708,7 +744,8 @@ el.promptForm.addEventListener('submit', async (e) => {
   appendMessage('user', prompt);
   el.btnRunAgent.disabled = true;
   el.btnRunAgent.textContent = '⏳...';
-  updateMainButton(appState.activeTab);
+  tg?.MainButton?.showProgress?.();
+  tg?.MainButton?.disable?.();
 
   try {
     const res = await callServerlessEndpoint('agent', { prompt });
@@ -725,6 +762,8 @@ el.promptForm.addEventListener('submit', async (e) => {
   } finally {
     el.btnRunAgent.disabled = false;
     el.btnRunAgent.textContent = 'اجرا 🚀';
+    tg?.MainButton?.hideProgress?.();
+    tg?.MainButton?.enable?.();
     updateMainButton(appState.activeTab);
   }
 });

@@ -14,7 +14,10 @@ import {
 } from '../lib/services/auth-service.js';
 import { deliverProjectZip } from '../lib/services/command-service.js';
 import { clearConversationHistory } from '../lib/services/conversation-service.js';
-import { sendSafeText } from '../lib/services/delivery-service.js';
+import {
+  markdownToTelegramHtml,
+  sendSafeText,
+} from '../lib/services/delivery-service.js';
 import {
   buildMainDashboardKeyboard,
   buildModelsKeyboard,
@@ -55,14 +58,24 @@ export default async function handleCallbackQuery(query) {
   const miniAppUrl = (await getSetting('mini_app_url')) || '';
 
   const safeEdit = async (text, replyMarkup) => {
+    if (!messageId) {
+      await sendSafeText(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : {});
+      return;
+    }
     try {
       await api.editMessageText({
         chat_id: chatId,
         message_id: messageId,
-        text,
+        text: markdownToTelegramHtml(text),
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       });
-    } catch {
+    } catch (err) {
+      const errMsg = String(err?.description ?? err?.message ?? '').toLowerCase();
+      if (errMsg.includes('message is not modified')) {
+        return;
+      }
       await sendSafeText(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : {});
     }
   };

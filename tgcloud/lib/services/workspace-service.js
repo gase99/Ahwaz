@@ -3,13 +3,13 @@ import { projects, workspaceFiles } from '../../schema.js';
 import { utf8ByteLength } from './binary-utils.js';
 import { createZipBytes, extractZipBytes } from './zip-service.js';
 
-const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/;
+const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,49}$/;
 
 export function sanitizeProjectName(name) {
   const trimmed = String(name ?? '').trim();
   if (!PROJECT_NAME_RE.test(trimmed)) {
     throw new Error(
-      `نام پروژه «${name}» معتبر نیست. فقط حروف انگلیسی، اعداد و - _ . مجاز است (۱ تا ۶۳ کاراکتر).`,
+      `نام پروژه «${name}» معتبر نیست. فقط حروف انگلیسی، اعداد و - _ . مجاز است (۱ تا ۵۰ کاراکتر).`,
     );
   }
   return trimmed;

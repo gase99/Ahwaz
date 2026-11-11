@@ -37,7 +37,7 @@ export function buildProvidersKeyboard(activeProvider, providerStatus = null) {
     const pair = PROVIDER_LIST.slice(i, i + 2).map((p) => {
       const isActive = p.id === activeProvider;
       const status = providerStatus?.[p.id];
-      const ready = status ? (status.isReady ? '✅' : '⚠️') : '';
+      const ready = status ? (status.isReady ? '✅ ' : '⚠️ ') : '';
       return {
         text: `${ready}${isActive ? '🟢 ' : ''}${p.shortBadge}`,
         callback_data: `cb:prov:${p.id}`,
@@ -81,8 +81,8 @@ export function buildModelsKeyboard(providerId, currentModel, customModels = nul
 export function buildProjectsKeyboard(projectList, activeProject) {
   const rows = projectList.slice(0, 12).map((proj) => [
     {
-      text: `${proj.name === activeProject ? '🟢 ' : '📁 '}${proj.name}`,
-      callback_data: `cb:proj:${proj.name}`,
+      text: `${proj.name === activeProject ? '🟢 ' : '📁 '}${proj.name}`.slice(0, 60),
+      callback_data: `cb:proj:${proj.name}`.slice(0, 64),
     },
   ]);
   rows.push([{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'cb:home' }]);

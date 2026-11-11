@@ -6,7 +6,7 @@ Autonomous multi-provider AI coding agent and web-based Mini App Code Studio bui
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-339933?logo=node.js&logoColor=white)](./package.json)
 [![Platform](https://img.shields.io/badge/runtime-Telegram%20Serverless%20V8-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/serverless)
 [![CLI](https://img.shields.io/badge/%40tgcloud%2Fcli-%5E0.2.0-0f172a)](./package.json)
-[![Tests](https://img.shields.io/badge/tests-Vitest%20(11%20passing)-6E9F18?logo=vitest&logoColor=white)](./tests)
+[![Tests](https://img.shields.io/badge/tests-Vitest%20(16%20passing)-6E9F18?logo=vitest&logoColor=white)](./tests)
 [![Telegram Contact](https://img.shields.io/badge/Telegram-%40webxplusx-26A5E4?logo=telegram&logoColor=white)](https://t.me/webxplusx)
 
 > **Language**: **English** | [فارسی (`README.fa.md`)](./README.fa.md)
@@ -252,13 +252,14 @@ All runtime API keys, URLs, and user permissions are stored inside Telegram Serv
 | `/setkey [provider] <api_key>` | Allowed Users | Saves an API key for an explicit or prefix-detected provider and auto-deletes the chat message. |
 | `/setcustom <base_url> [key] [model]` | Allowed Users | Configures and activates any custom OpenAI-compatible chat completions endpoint; auto-deletes message. |
 | `/model [model_id]` (or `/models`) | Allowed Users | Opens the model selection menu for the active provider or sets an explicit `<model_id>`. |
-| `/project [name]` (or `/projects`) | Allowed Users | Lists workspaces or creates/switches to project `<name>` (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`). |
+| `/guide [provider_id]` (or `/connect`) | Allowed Users | Displays step-by-step connection instructions, commands, and signup links for one or all providers. |
+| `/project [name]` (or `/projects`) | Allowed Users | Lists workspaces or creates/switches to project `<name>` (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,49}$`). |
 | `/files` | Allowed Users | Lists up to 80 files and byte sizes in the active SQLite workspace. |
 | `/cat <file_path>` | Allowed Users | Prints the contents of `<file_path>` (truncated safely at 3,500 characters). |
 | `/zip` | Allowed Users | Packages the active workspace into `<project>.zip` in memory and sends it as a Telegram document. |
 | `/ghclone <owner/repo> [branch]` | Allowed Users | Imports text source files from a GitHub repository into the active SQLite workspace. |
-| `/ghpush <owner/repo> [commit_msg]` | Allowed Users | Commits and pushes all files in the active workspace to the `main` branch on GitHub. |
-| `/setghtoken <ghp_token>` | Allowed Users | Saves a GitHub Personal Access Token and auto-deletes the message. |
+| `/ghpush <owner/repo> [commit_msg]` | Allowed Users | Commits and pushes all files in the active workspace to the project's configured branch (defaults to `main`) on GitHub. |
+| `/setghtoken <ghp_token>` (or `/setgithub`) | Allowed Users | Saves a GitHub Personal Access Token and auto-deletes the message. |
 | `/clear` | Allowed Users | Clears conversation history for the active project while keeping all workspace files intact. |
 | `/status` | Allowed Users | Displays runtime platform info, active provider/model, file count, prompt/tool counters, and GitHub token state. |
 | `/setminiapp <https://...>` | **Admin Only** | Saves the deployed Mini App HTTPS URL and adds the **Code Studio (Mini App)** WebApp button to `/start`. |
@@ -482,7 +483,6 @@ The following items are not yet defined in the codebase and are tracked for futu
 
 - [ ] **Add an explicit `LICENSE` file and `package.json` `"license"` field** (currently `package.json` sets `"private": true` with no license specified).
 - [ ] **Add a GitHub Actions CI workflow** (`.github/workflows/ci.yml`) to run `npm run build && npm run validate:tgcloud && npm test` automatically on pushes and pull requests.
-- [ ] **Align `/setminiapp` helper hint in `tgcloud/lib/services/command-service.js`**: update the inline Persian prompt string from ``npx tgcloud deploy`` to `npm run deploy` (`npx tgcloud push`).
 - [ ] **Optional UI Localization (`en` / `fa`)**: bot chat replies and Mini App UI labels are currently written in Persian (`fa`); adding a language toggle would improve international usability.
 
 ---

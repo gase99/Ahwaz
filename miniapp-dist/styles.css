@@ -262,6 +262,18 @@ a {
   flex-wrap: wrap;
 }
 
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.file-count-label {
+  font-size: 0.76rem;
+  color: var(--tg-muted);
+}
+
 .editor-btns {
   display: flex;
   gap: 6px;
@@ -363,107 +375,6 @@ a {
   flex: 1;
 }
 
-.provider-card {
-  background: var(--tg-surface);
-  border: 1px solid var(--tg-border);
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.provider-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.provider-info .provider-name {
-  font-weight: 700;
-  font-size: 0.88rem;
-}
-
-.provider-info .provider-meta {
-  font-size: 0.74rem;
-  color: var(--tg-muted);
-  line-height: 1.4;
-}
-
-.status {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.status-ok {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-}
-
-.status-need {
-  background: rgba(245, 158, 11, 0.2);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.4);
-}
-
-.provider-missing {
-  font-size: 0.74rem;
-  color: var(--tg-muted);
-  line-height: 1.5;
-}
-
-.provider-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.provider-row {
-  display: flex;
-  gap: 6px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-
-.provider-fields input,
-.provider-fields select {
-  background: var(--tg-bg);
-  color: var(--tg-text);
-  border: 1px solid var(--tg-border);
-  border-radius: 8px;
-  padding: 7px 10px;
-  font-size: 0.8rem;
-  min-width: 150px;
-  direction: ltr;
-}
-
-.btn-sm {
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 0.78rem;
-  padding: 6px 12px;
-  background: var(--tg-accent);
-  color: var(--tg-accent-text);
-  white-space: nowrap;
-}
-
-.provider-help-link {
-  margin-top: 6px;
-  font-size: 0.76rem;
-  color: var(--tg-accent);
-  cursor: pointer;
-  display: inline-block;
-}
-
 .settings-footer {
   display: flex;
   justify-content: flex-end;
@@ -481,102 +392,11 @@ a {
   padding: 5px 10px;
 }
 
-/* ── Help: provider cards ── */
 .help-cards {
   display: flex;
   flex-direction: column;
   gap: 10px;
   flex: 1;
-}
-
-.help-card {
-  background: var(--tg-surface);
-  border: 1px solid var(--tg-border);
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.help-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.help-name {
-  font-weight: 700;
-  font-size: 0.9rem;
-}
-
-.tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  border: 1px solid;
-  white-space: nowrap;
-}
-
-.tag-ok {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-  border-color: rgba(34, 197, 94, 0.35);
-}
-
-.tag-need {
-  background: rgba(245, 158, 11, 0.2);
-  color: #fbbf24;
-  border-color: rgba(245, 158, 11, 0.4);
-}
-
-.help-desc {
-  font-size: 0.78rem;
-  color: var(--tg-muted);
-  line-height: 1.55;
-  margin: 2px 0 0;
-}
-
-.help-steps > div {
-  font-size: 0.78rem;
-  line-height: 1.6;
-  margin: 2px 0;
-}
-
-.help-cmd {
-  font-size: 0.74rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  direction: ltr;
-  background: #0b1120;
-  color: #cbd5e1;
-  padding: 6px 8px;
-  border-radius: 6px;
-  margin: 4px 0 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.help-links {
-  font-size: 0.74rem;
-  color: var(--tg-accent);
-  margin: 4px 0 0;
-}
-
-.help-links a {
-  color: inherit;
-}
-
-.help-note {
-  font-size: 0.72rem;
-  color: var(--tg-muted);
-  line-height: 1.5;
-  border-top: 1px dashed var(--tg-border);
-  margin: 6px 0 0;
-  padding-top: 6px;
 }
 
 /* ── Cline-like Provider Cards ── */
@@ -739,6 +559,10 @@ a {
   opacity: 0.9;
 }
 
+.key-input-wrapper input {
+  padding-right: 42px;
+}
+
 .key-toggle {
   position: absolute;
   right: 10px;
@@ -817,14 +641,14 @@ a {
   font-size: 0.78rem;
   line-height: 1.6;
   margin: 2px 0;
-  padding-left: 16px;
+  padding-inline-start: 16px;
   position: relative;
 }
 
 .help-steps > div::before {
   content: '';
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   top: 0.7em;
   width: 6px;
   height: 6px;
@@ -889,7 +713,7 @@ a {
 
 .cmd-list li {
   margin: 6px 0;
-  padding-left: 22px;
+  padding-inline-start: 12px;
 }
 
 .cmd-list code {

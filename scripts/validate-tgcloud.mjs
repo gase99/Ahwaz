@@ -1,9 +1,21 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
 const tgcloudDir = path.join(root, 'tgcloud');
+const miniappSrcDir = path.join(root, 'miniapp', 'src');
+const miniappDistDir = path.join(root, 'miniapp-dist');
 const errors = [];
+
+function checkJsSyntax(filePath, relLabel) {
+  try {
+    execFileSync(process.execPath, ['--check', filePath], { stdio: 'pipe' });
+  } catch (err) {
+    const detail = String(err?.stderr ?? err?.message ?? '').trim().split('\n')[0];
+    errors.push(`${relLabel}: JavaScript syntax error (${detail})`);
+  }
+}
 
 function walk(dir, files = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -28,8 +40,10 @@ for (const file of jsFiles) {
   const relFile = path.relative(root, file).split(path.sep).join('/');
   const source = fs.readFileSync(file, 'utf8');
 
-  // Check imports
-  const importRegex = /\bimport\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+  checkJsSyntax(file, relFile);
+
+  // Check imports & re-exports
+  const importRegex = /\b(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
   let match;
   while ((match = importRegex.exec(source)) !== null) {
     const spec = match[1];
@@ -60,6 +74,33 @@ for (const file of jsFiles) {
 const schemaSource = fs.readFileSync(path.join(tgcloudDir, 'schema.js'), 'utf8');
 if (/\.references\s*\(|foreignKey\s*\(/.test(schemaSource)) {
   errors.push('tgcloud/schema.js: foreignKey() and .references() are forbidden in Telegram Serverless');
+}
+
+// Validate Mini App source syntax, DOM ID references, and built bundle parity
+const miniappJs = path.join(miniappSrcDir, 'app.js');
+const miniappHtml = path.join(miniappSrcDir, 'index.html');
+if (fs.existsSync(miniappJs) && fs.existsSync(miniappHtml)) {
+  checkJsSyntax(miniappJs, 'miniapp/src/app.js');
+  const appJsSrc = fs.readFileSync(miniappJs, 'utf8');
+  const htmlSrc = fs.readFileSync(miniappHtml, 'utf8');
+  const htmlIds = new Set(
+    Array.from(htmlSrc.matchAll(/\bid=["']([^"']+)["']/g), (m) => m[1]),
+  );
+  for (const m of appJsSrc.matchAll(/document\.getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    if (!htmlIds.has(m[1])) {
+      errors.push(`miniapp/src/app.js: getElementById('${m[1]}') missing in miniapp/src/index.html`);
+    }
+  }
+
+  for (const name of fs.readdirSync(miniappSrcDir)) {
+    const srcContent = fs.readFileSync(path.join(miniappSrcDir, name), 'utf8');
+    const distPath = path.join(miniappDistDir, name);
+    if (!fs.existsSync(distPath)) {
+      errors.push(`miniapp-dist/${name}: missing built file (run npm run build)`);
+    } else if (fs.readFileSync(distPath, 'utf8') !== srcContent) {
+      errors.push(`miniapp-dist/${name}: out of sync with miniapp/src/${name} (run npm run build)`);
+    }
+  }
 }
 
 if (errors.length > 0) {

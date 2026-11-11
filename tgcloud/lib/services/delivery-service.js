@@ -94,7 +94,7 @@ export function markdownToTelegramHtml(markdown) {
   text = escapeHtml(text);
   text = text.replace(/^#{1,4}\s+(.+)$/gm, '<b>$1</b>');
   text = text.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
-  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"]+)\)/g, '<a href="$2">$1</a>');
 
   text = text.replace(/\x00TGPH_(\d+)_\x00/g, (_m, idStr) => {
     return placeholders[Number(idStr)] ?? '';
@@ -149,7 +149,7 @@ export async function createLiveProgressTracker({ chatId, projectName }) {
 
   const sent = await api.sendMessage({
     chat_id: chatId,
-    text: `${header}\n⏳ در حال ارسال درخواست به Google Gemini...`,
+    text: `${header}\n⏳ در حال ارسال درخواست به سرویس هوش مصنوعی...`,
     parse_mode: 'HTML',
   });
 

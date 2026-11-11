@@ -27,6 +27,7 @@ export async function verifyJavaScriptSnippet(code) {
   };
 
   const t0 = Date.now();
+  let timerId = null;
   try {
     // Shadow ambient globals so snippet only tests pure JS logic
     const fn = new AsyncFunction(
@@ -39,9 +40,12 @@ export async function verifyJavaScriptSnippet(code) {
 
     const returnValue = await Promise.race([
       fn(sandboxConsole, assert, undefined, undefined),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('زمان اجرای تست بیش از ۵ ثانیه طول کشید.')), 5000),
-      ),
+      new Promise((_, reject) => {
+        timerId = setTimeout(
+          () => reject(new Error('زمان اجرای تست بیش از ۵ ثانیه طول کشید.')),
+          5000,
+        );
+      }),
     ]);
 
     return {
@@ -57,5 +61,7 @@ export async function verifyJavaScriptSnippet(code) {
       logs: logs.slice(0, 50).join('\n'),
       error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
     };
+  } finally {
+    if (timerId !== null) clearTimeout(timerId);
   }
 }
