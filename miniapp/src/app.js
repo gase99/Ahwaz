@@ -1,7 +1,10 @@
+import { ActiveModelCard } from './components/ActiveModelCard.js';
 import { ApiKeysPanel } from './components/ApiKeysPanel.js';
 import { ConnectionsDashboard } from './components/ConnectionsDashboard.js';
 import { ModelSelector } from './components/ModelSelector.js';
-import { escapeHtml } from './components/ProviderCatalog.js';
+import { copyText, downloadJson, safeFileSlug } from './components/download.js';
+import { escapeHtml, resolveProviderStatus } from './components/ProviderCatalog.js';
+import { parseProviderError } from './components/error-presenter.js';
 
 const tg = window.Telegram?.WebApp;
 
@@ -17,7 +20,10 @@ const el = {
   connectionsGrid: document.getElementById('connectionsGrid'),
   btnManageAllKeys: document.getElementById('btnManageAllKeys'),
   keysSummaryBanner: document.getElementById('keysSummaryBanner'),
+  activeModelCard: document.getElementById('activeModelCard'),
   providersGrid: document.getElementById('providersGrid'),
+  btnDownloadAllKeys: document.getElementById('btnDownloadAllKeys'),
+  btnSyncAllProviders: document.getElementById('btnSyncAllProviders'),
   providerLinksTable: document.getElementById('providerLinksTable'),
   projectSelect: document.getElementById('projectSelect'),
   btnNewProject: document.getElementById('btnNewProject'),
@@ -58,20 +64,18 @@ if (tg) {
   tg.ready();
   tg.expand();
 
+  // The redesign intentionally keeps a fixed deep-dark palette (#0A0E17) so
+  // the glass cards and LTR mono blocks always stay readable; only the header
+  // tint follows Telegram when the client exposes a dark header colour.
   const theme = tg.themeParams || {};
-  const setVar = (name, key, fallback) =>
-    document.documentElement.style.setProperty(name, theme[key] ?? fallback);
-  setVar('--tg-bg', 'bg_color', '#0f172a');
-  setVar('--tg-text', 'text_color', '#f8fafc');
-  setVar('--tg-muted', 'hint_color', '#94a3b8');
-  setVar('--tg-accent', 'button_color', '#38bdf8');
-  setVar('--tg-accent-text', 'button_text_color', '#0f172a');
-  setVar('--tg-surface', 'secondary_bg_color', '#1e293b');
-  setVar('--tg-header-bg', 'header_bg_color', '#1e293b');
+  if (theme.header_bg_color) {
+    document.documentElement.style.setProperty('--bg-soft', theme.header_bg_color);
+  }
+  document.body.classList.add('tg-dark');
 
   if (tg.MainButton) {
-    tg.MainButton.setBackgroundColor(theme.button_color ?? '#38bdf8');
-    tg.MainButton.setTextColor(theme.button_text_color ?? '#0f172a');
+    tg.MainButton.setBackgroundColor('#4f9cff');
+    tg.MainButton.setTextColor('#04101f');
     tg.MainButton.setText('اجرا 🚀');
   }
 
@@ -217,6 +221,50 @@ function showSuccess(msg) {
   haptic();
 }
 
+/*───────────────────────── Copy / Download helpers ──*/
+const COPY_LABELS = {
+  key: 'کلید ماسک‌شده',
+  endpoint: 'آدرس اندپوینت',
+  model: 'نام مدل',
+};
+
+async function copyToClipboard(value, label = 'مقدار') {
+  const ok = await copyText(value);
+  if (ok) {
+    showToast(`📋 ${label} کپی شد`, 1800);
+    haptic();
+  } else {
+    showToast('⚠️ کپی ناموفق بود؛ متن را دستی انتخاب کنید', 2600);
+  }
+}
+
+function providerStatusReport() {
+  return {
+    generatedAt: new Date().toISOString(),
+    app: 'Ahwaz Code Studio',
+    activeModel: appState.activeModel,
+    activeProvider: appState.activeProvider,
+    providers: appState.providers.map((spec) => ({
+      id: spec.id,
+      title: spec.title,
+      protocol: spec.protocol,
+      status: resolveProviderStatus(spec).kind,
+      endpoint: spec.baseUrl || spec.defaultBaseUrl || null,
+      defaultModel: spec.defaultModel,
+      apiKeyConfigured: Boolean(spec.apiKeyConfigured),
+      maskedKey: spec.maskedKey || null,
+      lastLatencyMs: spec.lastLatencyMs ?? null,
+      lastTestedAt: spec.lastTestedAt ?? null,
+      lastError: spec.lastError || null,
+    })),
+  };
+}
+
+function downloadConnectionReport() {
+  downloadJson('ahwaz-providers-status.json', providerStatusReport());
+  showSuccess('فایل وضعیت سرویس‌ها دانلود شد');
+}
+
 /*───────────────────────── Modular UI Components ──*/
 const modelSelector = new ModelSelector({
   searchInput: el.modelSearchInput,
@@ -267,7 +315,11 @@ const apiKeysPanel = new ApiKeysPanel({
           ok: false,
           message: res.error || 'اتصال برقرار نشد',
         });
-        showToast(`⚠️ تست ناموفق: ${res.error || 'کلید یا آدرس را بررسی کنید'}`, 3600);
+        const brief = parseProviderError(res.error);
+        showToast(
+          brief ? `⚠️ ${brief.titleFa} — ${brief.codeLabel}` : '⚠️ تست ناموفق: کلید یا آدرس را بررسی کنید',
+          3200,
+        );
       }
       renderAllComponents();
     } catch (err) {
@@ -314,6 +366,23 @@ const apiKeysPanel = new ApiKeysPanel({
       showError(err);
     }
   },
+  onActivateProvider: async (providerId) => {
+    try {
+      const res = await callServerlessEndpoint('studio', {
+        action: 'setProvider',
+        providerId,
+      });
+      applyStudioUpdate(res);
+      showSuccess(`سرویس ${providerId} فعال شد`);
+    } catch (err) {
+      showError(err);
+    }
+  },
+  onCopy: (value, providerId, field) => {
+    copyToClipboard(value, COPY_LABELS[field] || 'مقدار');
+  },
+  onNotify: (message) => showToast(message, 2400),
+  onDownloadAll: () => downloadConnectionReport(),
   onSyncModels: async ({ providerId }) => {
     try {
       showToast(`🔄 دریافت لیست زنده مدل‌های ${providerId}...`);
@@ -329,6 +398,20 @@ const apiKeysPanel = new ApiKeysPanel({
     } catch (err) {
       showError(err);
     }
+  },
+});
+
+const activeModelCard = new ActiveModelCard({
+  container: el.activeModelCard,
+  onConfigure: (providerId) => {
+    apiKeysPanel.setEditing(providerId, true);
+    switchTab('settings');
+    apiKeysPanel.focusProviderCard(providerId, false);
+  },
+  onCopyModel: (modelId) => copyToClipboard(modelId, 'نام مدل'),
+  onOpenSelector: () => {
+    switchTab('agent');
+    modelSelector.focusSelector();
   },
 });
 
@@ -365,7 +448,11 @@ const connectionsDashboard = new ConnectionsDashboard({
       if (res.success) {
         showSuccess(`تست ${providerId} موفق (${res.latency_ms}ms)`);
       } else {
-        showToast(`⚠️ تست ${providerId} ناموفق: ${res.error || 'خطا'}`, 3600);
+        const brief = parseProviderError(res.error);
+        showToast(
+          brief ? `⚠️ ${brief.titleFa} — ${brief.codeLabel}` : `⚠️ تست ${providerId} ناموفق`,
+          3200,
+        );
       }
     } catch (err) {
       showError(err);
@@ -436,6 +523,11 @@ el.btnHeaderBack?.addEventListener('click', () => switchTab('agent'));
 el.btnEditorBack?.addEventListener('click', () => switchTab('agent'));
 el.btnHeaderConnections?.addEventListener('click', () => switchTab('connections'));
 el.btnManageAllKeys?.addEventListener('click', () => switchTab('settings'));
+el.btnDownloadAllKeys?.addEventListener('click', () => downloadConnectionReport());
+el.btnSyncAllProviders?.addEventListener('click', () => {
+  showToast('🔄 همگام‌سازی وضعیت سرویس‌ها با ربات…', 1800);
+  loadInitialState({ silent: true });
+});
 
 /*───────────────────────── State Sync & Rendering ──*/
 function applyStudioUpdate(res) {
@@ -491,6 +583,12 @@ function renderAllComponents() {
   });
 
   connectionsDashboard.render({
+    providers: appState.providers,
+    activeProvider: appState.activeProvider,
+    activeModel: appState.activeModel,
+  });
+
+  activeModelCard.render({
     providers: appState.providers,
     activeProvider: appState.activeProvider,
     activeModel: appState.activeModel,

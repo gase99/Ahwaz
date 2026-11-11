@@ -1,11 +1,19 @@
 /**
- * Shared UI helpers, provider icons, status badges, model tags, and relative time formatting.
+ * Shared UI helpers, provider icons, status models, model tags, and relative time formatting.
+ * Pure functions only — safe to import in Node (no DOM requirement).
  */
 
+const HTML_ESCAPES = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+  '`': '&#96;',
+};
+
 export function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text ?? '';
-  return div.innerHTML;
+  return String(text ?? '').replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);
 }
 
 export const PROVIDER_LOGOS = {
@@ -25,10 +33,10 @@ export function getProviderLogo(spec) {
 }
 
 /**
- * Computes normalized connection state for UI cards & badges:
- * - 'connected'    -> ✅ متصل
- * - 'invalid'      -> ⚠️ نامعتبر
- * - 'disconnected' -> ❌ متصل نیست
+ * Normalized raw connection state (kept backward compatible with earlier releases):
+ * - 'connected'    -> credentials present / keyless-ready
+ * - 'invalid'      -> last test failed
+ * - 'disconnected' -> no credentials yet
  */
 export function resolveUiConnectionState(spec) {
   if (!spec) return 'disconnected';
@@ -52,30 +60,92 @@ export function resolveUiConnectionState(spec) {
   return 'disconnected';
 }
 
-export function renderConnectionBadgeHtml(spec) {
-  const state = resolveUiConnectionState(spec);
-  if (state === 'connected') {
-    const sub = !spec.apiKeyConfigured && !spec.requiresKey ? ' (بدون کلید)' : '';
-    return `<span class="status status-ok">✅ متصل${sub}</span>`;
-  }
-  if (state === 'invalid') {
-    return '<span class="status status-warn">⚠️ نامعتبر</span>';
-  }
-  return '<span class="status status-err">❌ متصل نیست</span>';
+/** Detects rate-limit style failures so the UI can show an amber "standby" state. */
+export function isRateLimitError(rawError) {
+  return /429|rate[\s-]?limit|too many requests|سقف|محدودیت/i.test(String(rawError ?? ''));
 }
 
-export function formatConnectionLabelText(spec) {
-  const state = resolveUiConnectionState(spec);
-  if (state === 'connected') {
-    return !spec.apiKeyConfigured && !spec.requiresKey ? '✅ آماده (بدون کلید)' : '✅ متصل';
-  }
-  if (state === 'invalid') return '⚠️ نامعتبر';
-  return '❌ متصل نیست';
+/** Extracts an HTTP status code from a raw provider error, if present. */
+export function extractHttpStatus(rawError) {
+  const match = String(rawError ?? '').match(/\b(?:HTTP\s*)?([45]\d{2})\b/i);
+  return match ? Number(match[1]) : null;
 }
 
 /**
- * Decorates a model option with clear capability/pricing icons:
- * 🆓 (رایگان), 💰 (پولی/سفارشی), ⚡ (سریع), 🧠 (قدرتمند), ⭐ (پیشنهادی)
+ * Rich, presentation-ready provider status used by cards and badges.
+ * kind: 'connected' | 'limited' | 'error' | 'standby'
+ */
+export function resolveProviderStatus(spec) {
+  const uiState = resolveUiConnectionState(spec);
+
+  if (uiState === 'connected') {
+    const keyless = !spec?.requiresKey && !spec?.apiKeyConfigured;
+    return {
+      kind: 'connected',
+      label: keyless ? 'متصل · بدون کلید' : 'متصل',
+      shortLabel: 'متصل',
+      tone: 'ok',
+      dotClass: 'dot-ok',
+    };
+  }
+
+  if (uiState === 'invalid') {
+    if (isRateLimitError(spec?.lastError)) {
+      return {
+        kind: 'limited',
+        label: 'محدودیت موقت',
+        shortLabel: 'محدود',
+        tone: 'warn',
+        dotClass: 'dot-warn',
+      };
+    }
+    return {
+      kind: 'error',
+      label: 'خطا در اتصال',
+      shortLabel: 'خطا',
+      tone: 'err',
+      dotClass: 'dot-err',
+    };
+  }
+
+  if (spec?.lastError) {
+    return {
+      kind: 'error',
+      label: 'تنظیم ناقص',
+      shortLabel: 'ناقص',
+      tone: 'err',
+      dotClass: 'dot-err',
+    };
+  }
+
+  return {
+    kind: 'standby',
+    label: spec?.requiresKey ? 'بدون کلید' : 'در آماده‌به‌کار',
+    shortLabel: 'غیرفعال',
+    tone: 'muted',
+    dotClass: 'dot-muted',
+  };
+}
+
+/** Label helper kept for the grouped <select> and legacy callers. */
+export function formatConnectionLabelText(spec) {
+  const { kind, label } = resolveProviderStatus(spec);
+  if (kind === 'connected') return `✅ ${label}`;
+  if (kind === 'limited') return '⏳ محدودیت موقت';
+  if (kind === 'error') return '⚠️ خطا در اتصال';
+  return '⚪ غیرفعال';
+}
+
+export function renderConnectionBadgeHtml(spec) {
+  const status = resolveProviderStatus(spec);
+  return `<span class="badge badge-${status.tone}"><span class="dot ${status.dotClass}"></span>${escapeHtml(
+    status.label,
+  )}</span>`;
+}
+
+/**
+ * Decorates a model option with capability/pricing icons:
+ * 🆓 (free), 💰 (paid/custom), ⚡ (fast), 🧠 (powerful), ⭐ (recommended)
  */
 export function formatModelOptionLabel(model, providerSpec) {
   const id = String(model?.id ?? '');
@@ -122,5 +192,21 @@ export function summarizeProviderCounts(providers = []) {
     connected,
     invalid,
     disconnected,
+  };
+}
+
+/** Counts grouped by the richer card status (adds the amber "limited" bucket). */
+export function summarizeProviderStatuses(providers = []) {
+  const groups = { connected: [], limited: [], error: [], standby: [] };
+  for (const p of providers) {
+    const status = resolveProviderStatus(p);
+    groups[status.kind].push(p);
+  }
+  return {
+    total: providers.length,
+    connected: groups.connected,
+    limited: groups.limited,
+    error: groups.error,
+    standby: groups.standby,
   };
 }
