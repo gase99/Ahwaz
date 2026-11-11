@@ -1,9 +1,47 @@
 const tg = window.Telegram?.WebApp;
+
+/*───────────────────────── Telegram WebApp init ──*/
 if (tg) {
   tg.ready();
   tg.expand();
+
+  // Sync CSS theme variables with the Telegram theme
+  const theme = tg.themeParams || {};
+  const setVar = (name, key, fallback) =>
+    document.documentElement.style.setProperty(name, theme[key] ?? fallback);
+  setVar('--tg-bg', 'bg_color', '#0f172a');
+  setVar('--tg-text', 'text_color', '#f8fafc');
+  setVar('--tg-muted', 'hint_color', '#94a3b8');
+  setVar('--tg-accent', 'button_color', '#38bdf8');
+  setVar('--tg-accent-text', 'button_text_color', '#0f172a');
+  setVar('--tg-surface', 'secondary_bg_color', '#1e293b');
+  setVar('--tg-header-bg', 'header_bg_color', '#1e293b');
+
+  if (tg.MainButton) {
+    tg.MainButton.setBackgroundColor(theme.button_color ?? '#38bdf8');
+    tg.MainButton.setTextColor(theme.button_text_color ?? '#0f172a');
+    tg.MainButton.setText('اجرا 🚀');
+  }
+
+  tg.BackButton.onClick(() => {
+    switchTab('agent');
+    tg.BackButton.hide();
+  });
+
+  tg.MainButton.onClick(() => {
+    if (appState.activeTab === 'agent') {
+      el.btnRunAgent.click();
+    } else if (appState.activeTab === 'editor') {
+      el.btnSaveFile.click();
+    }
+  });
 }
 
+function haptic(style = 'light') {
+  tg?.HapticFeedback?.impactOccurred?.(style);
+}
+
+/*───────────────────────── Serverless calls ──*/
 async function callServerlessEndpoint(name, payload = {}) {
   if (tg?.Serverless?.call) {
     return await new Promise((resolve, reject) => {
@@ -29,22 +67,142 @@ async function callServerlessEndpoint(name, payload = {}) {
   return data?.result ?? data;
 }
 
+/*───────────────────────── Errors: meaning + what-to-do (Persian) ──*/
+function classifyError(err) {
+  const msg = String(err?.message ?? '');
+  const low = msg.toLowerCase();
+  const status = err.status ?? null;
+
+  const net = /failed to fetch|networkerror|net::err|timeout/i.test(msg);
+  if (net) {
+    return {
+      code: 'NETWORK',
+      title: 'اتصال برقرار نیست',
+      meaning: 'اتصال به اینترنت یا سرور تلگرام سرلس در دسترس نیست.',
+      fix: 'اتصال اینترنت را بررسی کنید، برنامه تلگرام را ببندید و دوباره باز کنید، سپس اقدام را تکرار کنید.',
+    };
+  }
+
+  const auth =
+    /از داخل تلگرام|احراز هویت|unauthorized/i.test(low) ||
+    status === 401 ||
+    status === 403;
+  if (auth) {
+    if (/تایید نشده|forbidden/i.test(low) || status === 403) {
+      return {
+        code: 'FORBIDDEN',
+        title: 'حساب تایید نشده',
+        meaning: 'حساب کاربری شما توسط ادمین ربات تایید نشده است.',
+        fix: 'با دستور `/whoami` شناسه عددی خود را دریافت کنید و از ادمین بخواهید دستور `/allow <شناسه>` را اجرا کند.',
+      };
+    }
+    return {
+      code: 'UNAUTHORIZED',
+      title: 'فقط از داخل تلگرام',
+      meaning: 'مینی آپ باید از طریق چت ربات تلگرام باز شود (دکمه Code Studio).',
+      fix: 'باز کردن لینک مستقیماً در مرورگر عادی کار نمی‌کند. در چت ربات خود، دکمه «باز کردن Code Studio (Mini App)』 را بزنید.',
+    };
+  }
+
+  if (/یافت نشد|پیدا نشد|not_found/i.test(low) || status === 404) {
+    return {
+      code: 'NOT_FOUND',
+      title: 'یافت نشد',
+      meaning: 'فایل، پروژه یا آیتم مورد نظر وجود ندارد.',
+      fix: 'لیست را بروزرسانی کنید؛ ممکن است فایل حذف شده یا نام پروژه تغییر کرده باشد.',
+    };
+  }
+
+  if (/خالی|empty_prompt/i.test(low)) {
+    return {
+      code: 'EMPTY_PROMPT',
+      title: 'پیام خالی',
+      meaning: 'متن درخواست کدنویسی خالی است.',
+      fix: 'متن درخواست را در فیلد ورودی بنویسید و دکمه اجرا را بزنید.',
+    };
+  }
+
+  if (/محدودیت|rate limit/i.test(low) || status === 429) {
+    return {
+      code: 'RATE_LIMIT',
+      title: 'محدودیت تعداد درخواست',
+      meaning: 'سقف تعداد درخواست‌های به سرویس هوش مصنوعی عبور شد.',
+      fix: 'چند دقیقه صبر کنید یا سرویس/مدل رایگان دیگر (مثل LLM7 یا OpenCode) را انتخاب کنید.',
+    };
+  }
+
+  if (/opencode/i.test(low)) {
+    return {
+      code: 'OPENCODE_SYNC',
+      title: 'دریافت مدل‌های OpenCode شکست خورد',
+      meaning: 'لیست زنده مدل‌های رایگان از opencode.ai دریافت نشد.',
+      fix: 'اتصال اینترنت را بررسی کنید. مدل‌های پیش‌فرض همچنان قابل استفاده‌اند؛ برای سقف بالاتر کلید رایگان را از https://opencode.ai/auth ثبت کنید.',
+    };
+  }
+
+  if (/agent_error|خطا در اجرای ایجنت/i.test(low)) {
+    return {
+      code: 'AGENT_ERROR',
+      title: 'خطای سرویس هوش مصنوعی',
+      meaning:
+        'ارتباط با مدل هوش مصنوعی با خطا مواجه شد (کلید نامعتبر، آدرس سرور اشتباه یا پاسخ نامعتبر مدل).',
+      fix:
+        'در بخش تنظیمات کلید API و آدرس سرور را بررسی کنید؛ برای تست سریع بدون کلید، سرویس LLM7 یا OpenCode را انتخاب کنید.',
+    };
+  }
+
+  if (status && status >= 500) {
+    return {
+      code: 'SERVER',
+      title: 'خطای سرور',
+      meaning: 'خطایی در سرور تلگرام سرلس رخ داد.',
+      fix: 'بعداً دوباره امتحان کنید؛ در صورت تکرار، متن خطا را به پشتیبانی @webxplusx بفرستید.',
+    };
+  }
+
+  return {
+    code: 'UNKNOWN',
+    title: 'خطای ناشناخته',
+    meaning: msg || 'خطایی رخ داد.',
+    fix: 'متن خطا را کپی کرده و به توسعه‌دهنده (@webxplusx) بفرستید.',
+  };
+}
+
+function showError(err, blocking = true) {
+  const c = classifyError(err);
+  console.error(`[Ahwaz][${c.code}]`, err);
+  const text = `❌ ${c.title}\n\n${c.meaning}\n\n🔧 ${c.fix}`;
+  if (blocking && tg?.showAlert) {
+    tg.HapticFeedback?.notificationOccurred?.('error');
+    return tg.showAlert(text);
+  }
+  showToast(`❌ ${c.title}: ${c.meaning}`);
+}
+
+function showSuccess(msg) {
+  showToast(`✅ ${msg}`);
+  haptic();
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text ?? '';
+  return div.innerHTML;
+}
+
+/*───────────────────────── DOM refs ──*/
 const el = {
   providerSelect: document.getElementById('providerSelect'),
   modelSelect: document.getElementById('modelSelect'),
-  btnProviderCfg: document.getElementById('btnProviderCfg'),
-  cfgModal: document.getElementById('cfgModal'),
-  cfgTitle: document.getElementById('cfgTitle'),
-  cfgHint: document.getElementById('cfgHint'),
-  cfgBaseUrl: document.getElementById('cfgBaseUrl'),
-  cfgApiKey: document.getElementById('cfgApiKey'),
-  cfgCustomModel: document.getElementById('cfgCustomModel'),
+  btnRefresh: document.getElementById('btnRefresh'),
+  btnHeaderBack: document.getElementById('btnHeaderBack'),
+  btnEditorBack: document.getElementById('btnEditorBack'),
+  providersGrid: document.getElementById('providersGrid'),
   btnSyncOpenCode: document.getElementById('btnSyncOpenCode'),
-  btnSaveCfg: document.getElementById('btnSaveCfg'),
-  btnCloseCfg: document.getElementById('btnCloseCfg'),
   projectSelect: document.getElementById('projectSelect'),
   btnNewProject: document.getElementById('btnNewProject'),
   btnExportZip: document.getElementById('btnExportZip'),
+  tabFilesCount: document.getElementById('tabFilesCount'),
   fileCount: document.getElementById('fileCount'),
   fileList: document.getElementById('fileList'),
   agentLog: document.getElementById('agentLog'),
@@ -52,42 +210,74 @@ const el = {
   promptInput: document.getElementById('promptInput'),
   btnRunAgent: document.getElementById('btnRunAgent'),
   btnCreateFile: document.getElementById('btnCreateFile'),
-  btnRefresh: document.getElementById('btnRefresh'),
+  btnRefreshFiles: document.getElementById('btnRefreshFiles'),
   editorPath: document.getElementById('editorPath'),
   editorContent: document.getElementById('editorContent'),
   btnSaveFile: document.getElementById('btnSaveFile'),
   btnDeleteFile: document.getElementById('btnDeleteFile'),
   toast: document.getElementById('toast'),
+  helpGrid: document.getElementById('helpGrid'),
 };
 
 let appState = {
+  activeTab: 'agent',
   providers: [],
+  providerHelp: [],
   activeProvider: 'opencode',
   activeModel: 'big-pickle',
   activeProject: 'default',
   projects: [],
   files: [],
+  user: {},
 };
 
-function showToast(msg) {
-  el.toast.textContent = msg;
-  el.toast.classList.remove('hidden');
-  setTimeout(() => el.toast.classList.add('hidden'), 2600);
-}
-
+/*───────────────────────── Tabs & native buttons ──*/
 function switchTab(tabName) {
   document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
   });
   document.querySelectorAll('.panel').forEach((panel) => {
-    panel.classList.toggle('active', panel.id === `panel-${tabName}`);
+    const active = panel.id === `panel-${tabName}`;
+    panel.classList.toggle('active', active);
+    panel.classList.toggle('panel-mainbtn', active && (tabName === 'agent' || tabName === 'editor'));
   });
+  appState.activeTab = tabName;
+  updateMainButton(tabName);
+  updateBackButton(tabName);
+  if (tabName === 'settings') renderProviders();
+  if (tabName === 'help') renderHelp();
+  haptic();
+}
+
+function updateMainButton(tab) {
+  if (!tg?.MainButton) return;
+  if (tab === 'agent') {
+    tg.MainButton.setText('اجرا 🚀').show();
+  } else if (tab === 'editor') {
+    tg.MainButton.setText('ذخیره 💾').show();
+  } else {
+    tg.MainButton.hide();
+  }
+}
+
+function updateBackButton(tab) {
+  if (!tg?.BackButton) return;
+  if (tab === 'agent') tg.BackButton.hide();
+  else tg.BackButton.show();
 }
 
 document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
+el.btnHeaderBack.addEventListener('click', () => {
+  switchTab('agent');
+});
+el.btnEditorBack.addEventListener('click', () => {
+  switchTab('agent');
+});
+
+/*───────────────────────── Providers & models ──*/
 function getProviderObj(id) {
   return appState.providers.find((p) => p.id === id) || appState.providers[0];
 }
@@ -116,13 +306,156 @@ function renderProviderAndModels() {
       if (m.id === appState.activeModel) opt.selected = true;
       el.modelSelect.appendChild(opt);
     }
-    el.cfgTitle.textContent = `⚙️ ${spec.title}`;
-    el.cfgHint.textContent = spec.signupHint || '';
   }
 }
 
+function renderProviders() {
+  const grid = el.providersGrid;
+  grid.innerHTML = '';
+  const activeProvider = appState.activeProvider;
+  for (const spec of appState.providers) {
+    const active = spec.id === activeProvider;
+    const ready = Boolean(spec.isReady);
+    const card = document.createElement('div');
+    card.className = 'provider-card';
+    card.innerHTML = providerCardHtml(spec, active, ready);
+    grid.appendChild(card);
+  }
+}
+
+function providerCardHtml(spec, active, ready) {
+  const chip = ready
+    ? '<span class="status status-ok">✅ تنظیم شده</span>'
+    : '<span class="status status-need">⚠️ نیازمند تنظیم</span>';
+  const missing = spec.missingReason
+    ? `<div class="provider-missing">${escapeHtml(spec.missingReason)}</div>`
+    : '';
+
+  let fields = '';
+  if (spec.requiresKey) {
+    fields += `<input type="password" data-field="apiKey" dir="ltr" placeholder="کلید API${spec.apiKeyConfigured ? ' (فعلی مخفی است)' : ''}" />`;
+  }
+  if (spec.requiresBaseUrl) {
+    fields += `<input type="url" data-field="baseUrl" dir="ltr" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ''}" />`;
+  }
+  fields += `<select data-field="model">${spec.models
+    .map(
+      (m) =>
+        `<option value="${escapeHtml(m.id)}" ${
+          m.id === appState.activeModel ? 'selected' : ''
+        }>${escapeHtml(m.label)}</option>`
+    )
+    .join('')}</select>`;
+  fields += `<button class="btn-sm" data-provider="${escapeHtml(
+    spec.id
+  )}">${active ? 'فعال‌سازی و ذخیره' : 'ذخیره برای این سرویس'}</button>`;
+
+  return `
+    <div class="provider-head">
+      <div class="provider-info">
+        <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
+        <div class="provider-meta">${escapeHtml(spec.title)} · ${spec.protocol}</div>
+      </div>
+      ${chip}
+    </div>
+    ${missing}
+    <div class="provider-fields">
+      <div class="provider-row">${fields}</div>
+    </div>
+    <a class="provider-help-link" data-help-provider="${escapeHtml(
+      spec.id
+    )}">📘 راهنمای اتصال ${escapeHtml(spec.title)}</a>
+  `;
+}
+
+el.providersGrid.addEventListener('click', async (e) => {
+  const saveBtn = e.target.closest('button[data-provider]');
+  if (saveBtn) {
+    const providerId = saveBtn.dataset.provider;
+    const card = saveBtn.closest('.provider-card');
+    const apiKeyInput = card.querySelector('[data-field="apiKey"]');
+    const baseUrlInput = card.querySelector('[data-field="baseUrl"]');
+    const modelSelect = card.querySelector('[data-field="model"]');
+    const payload = {
+      action: 'setProvider',
+      providerId,
+      apiKey: apiKeyInput ? (apiKeyInput.value.trim() || undefined) : undefined,
+      baseUrl: baseUrlInput
+        ? baseUrlInput.value.trim() || undefined
+        : undefined,
+      model: modelSelect ? modelSelect.value.trim() || undefined : undefined,
+    };
+    try {
+      const res = await callServerlessEndpoint('studio', payload);
+      appState.activeProvider = res.provider;
+      appState.activeModel = res.model;
+      renderProviderAndModels();
+      renderProviders();
+      showSuccess(`تنظیمات ${res.provider} ذخیره شد`);
+    } catch (err) {
+      showError(err);
+    }
+    return;
+  }
+
+  const helpLink = e.target.closest('[data-help-provider]');
+  if (helpLink) {
+    switchTab('help');
+    const target = document.getElementById(`help-${helpLink.dataset.helpProvider}`);
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
+});
+
+/*───────────────────────── Help panel ──*/
+function renderHelp() {
+  const grid = el.helpGrid;
+  grid.innerHTML = '';
+  for (const h of appState.providerHelp) {
+    grid.appendChild(helpCardHtml(h));
+  }
+  const hash = window.location.hash;
+  if (hash) {
+    const target = document.getElementById(hash.slice(1));
+    if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth' }), 50);
+  }
+}
+
+function helpCardHtml(h) {
+  const div = document.createElement('div');
+  div.className = 'help-card';
+  div.id = `help-${h.id}`;
+  const tag = h.keyless
+    ? '<span class="tag tag-ok">🆓 بدون نیاز به کلید</span>'
+    : '<span class="tag tag-need">🔑 نیاز به کلید API</span>';
+  const steps = (h.steps || [])
+    .map((s, i) => `<div>${i + 1}) ${escapeHtml(s)}</div>`)
+    .join('');
+  const links = (h.links || []).length
+    ? (h.links || []).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join(' · ')
+    : '<span style="color: var(--tg-muted)">بدون لینک ثبت‌نام ثابت (قابل استفاده بدون ثبت‌نام)</span>';
+  const cmds = (h.commands || []).length
+    ? `<div class="help-cmd">${(h.commands || []).join(' · ')}</div>`
+    : '';
+  div.innerHTML = `
+    <div class="help-head">
+      <div class="help-name">${escapeHtml(h.title)}</div>
+      ${tag}
+    </div>
+    <div class="help-desc">${escapeHtml(h.summary)}</div>
+    ${steps}
+    ${cmds}
+    <div class="help-links">${links}</div>
+    ${h.note ? `<div class="help-note">💡 ${escapeHtml(h.note)}</div>` : ''}
+  `;
+  return div;
+}
+
+/*───────────────────────── State ──*/
 function renderState(state) {
   if (state.providers) appState.providers = state.providers;
+  if (state.providerHelp) appState.providerHelp = state.providerHelp;
+  if (state.user) appState.user = state.user;
   if (state.user?.provider) appState.activeProvider = state.user.provider;
   if (state.user?.model) appState.activeModel = state.user.model;
   appState.activeProject = state.activeProject || appState.activeProject;
@@ -130,6 +463,7 @@ function renderState(state) {
   appState.files = state.files || [];
 
   renderProviderAndModels();
+  el.tabFilesCount.textContent = String(appState.files.length);
 
   el.projectSelect.innerHTML = '';
   for (const proj of appState.projects) {
@@ -151,7 +485,7 @@ function renderState(state) {
     for (const f of appState.files) {
       const li = document.createElement('li');
       li.className = 'file-item';
-      li.innerHTML = `<span>📄 ${f.path}</span><span class="file-size">${f.sizeBytes} B</span>`;
+      li.innerHTML = `<span>📄 ${escapeHtml(f.path)}</span><span class="file-size">${f.sizeBytes} B</span>`;
       li.addEventListener('click', () => openFileInEditor(f.path));
       el.fileList.appendChild(li);
     }
@@ -163,10 +497,11 @@ async function loadInitialState() {
     const data = await callServerlessEndpoint('studio', { action: 'state' });
     renderState(data);
   } catch (err) {
-    appendMessage('system', `⚠️ ${err.message}`);
+    showError(err);
   }
 }
 
+/*───────────────────────── Files ──*/
 async function openFileInEditor(path) {
   try {
     const data = await callServerlessEndpoint('studio', { action: 'readFile', path });
@@ -186,7 +521,7 @@ function appendMessage(role, text, toolLogs = []) {
   if (toolLogs.length > 0) {
     const toolsDiv = document.createElement('div');
     toolsDiv.className = 'tool-pills';
-    toolsDiv.textContent = `🛠️ ابزارهای اجراشده:\n${toolLogs.join('\n')}`;
+    toolsDiv.textContent = `🛠️ ابزارهای اجرا شده:\n${toolLogs.join('\n')}`;
     div.appendChild(toolsDiv);
   }
 
@@ -194,6 +529,7 @@ function appendMessage(role, text, toolLogs = []) {
   el.agentLog.scrollTop = el.agentLog.scrollHeight;
 }
 
+/*───────────────────────── Provider / model switching ──*/
 el.providerSelect.addEventListener('change', async () => {
   const nextProv = el.providerSelect.value;
   try {
@@ -204,9 +540,10 @@ el.providerSelect.addEventListener('change', async () => {
     appState.activeProvider = res.provider;
     appState.activeModel = res.model;
     renderProviderAndModels();
-    showToast(`🌐 سرویس فعال: ${res.provider} (${res.model})`);
+    renderProviders();
+    showSuccess(`سرویس فعال: ${res.provider} (${res.model})`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
@@ -215,18 +552,10 @@ el.modelSelect.addEventListener('change', async () => {
     const model = el.modelSelect.value;
     await callServerlessEndpoint('studio', { action: 'setModel', model });
     appState.activeModel = model;
-    showToast(`🧠 مدل فعال: ${model}`);
+    showSuccess(`مدل فعال: ${model}`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
-});
-
-el.btnProviderCfg.addEventListener('click', () => {
-  el.cfgModal.classList.toggle('hidden');
-});
-
-el.btnCloseCfg.addEventListener('click', () => {
-  el.cfgModal.classList.add('hidden');
 });
 
 el.btnSyncOpenCode.addEventListener('click', async () => {
@@ -239,65 +568,14 @@ el.btnSyncOpenCode.addEventListener('click', async () => {
     }
     appState.activeProvider = 'opencode';
     renderProviderAndModels();
-    showToast(`✅ ${res.models.length} مدل رایگان OpenCode دریافت شد!`);
+    renderProviders();
+    showSuccess(`${res.models.length} مدل رایگان OpenCode دریافت شد!`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
-el.btnSaveCfg.addEventListener('click', async () => {
-  const providerId = el.providerSelect.value;
-  const baseUrl = el.cfgBaseUrl.value.trim();
-  const apiKey = el.cfgApiKey.value.trim();
-  const customModel = el.cfgCustomModel.value.trim();
-
-  try {
-    const res = await callServerlessEndpoint('studio', {
-      action: 'setProvider',
-      providerId,
-      baseUrl: baseUrl || undefined,
-      apiKey: apiKey || undefined,
-      model: customModel || undefined,
-    });
-    appState.activeProvider = res.provider;
-    appState.activeModel = res.model;
-    el.cfgApiKey.value = '';
-    el.cfgModal.classList.add('hidden');
-    renderProviderAndModels();
-    showToast(`✅ تنظیمات سرویس ${res.provider} ذخیره شد`);
-  } catch (err) {
-    showToast(err.message);
-  }
-});
-
-el.promptForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const prompt = el.promptInput.value.trim();
-  if (!prompt) return;
-
-  el.promptInput.value = '';
-  appendMessage('user', prompt);
-  el.btnRunAgent.disabled = true;
-  el.btnRunAgent.textContent = '⏳...';
-
-  try {
-    const res = await callServerlessEndpoint('agent', { prompt });
-    const footer = `\n\n🌐 ${res.providerBadge} • ${res.model}${
-      res.routedVia ? ` (${res.routedVia})` : ''
-    }`;
-    appendMessage('assistant', `${res.text}${footer}`, res.toolLogs || []);
-    if (res.files) {
-      appState.files = res.files;
-      renderState({ activeProject: appState.activeProject, files: res.files });
-    }
-  } catch (err) {
-    appendMessage('system', `❌ خطا: ${err.message}`);
-  } finally {
-    el.btnRunAgent.disabled = false;
-    el.btnRunAgent.textContent = 'اجرا 🚀';
-  }
-});
-
+/*───────────────────────── Projects & files ──*/
 el.projectSelect.addEventListener('change', async () => {
   try {
     const data = await callServerlessEndpoint('studio', {
@@ -305,9 +583,9 @@ el.projectSelect.addEventListener('change', async () => {
       projectName: el.projectSelect.value,
     });
     renderState(data);
-    showToast(`پروژه فعال: ${data.activeProject}`);
+    showSuccess(`پروژه فعال: ${data.activeProject}`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
@@ -320,9 +598,9 @@ el.btnNewProject.addEventListener('click', async () => {
       projectName: name,
     });
     renderState(data);
-    showToast(`پروژه ${data.activeProject} ساخته شد`);
+    showSuccess(`پروژه ${data.activeProject} ساخته شد`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
@@ -333,6 +611,7 @@ el.btnCreateFile.addEventListener('click', () => {
 });
 
 el.btnRefresh.addEventListener('click', loadInitialState);
+el.btnRefreshFiles.addEventListener('click', loadInitialState);
 
 el.btnSaveFile.addEventListener('click', async () => {
   const path = el.editorPath.value.trim();
@@ -344,24 +623,28 @@ el.btnSaveFile.addEventListener('click', async () => {
       content: el.editorContent.value,
     });
     renderState({ activeProject: appState.activeProject, files: data.files });
-    showToast(`✅ فایل ${data.path} ذخیره شد`);
+    showSuccess(`فایل ${data.path} ذخیره شد`);
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
 el.btnDeleteFile.addEventListener('click', async () => {
   const path = el.editorPath.value.trim();
   if (!path) return;
+  const confirmed = tg?.showConfirm
+    ? await tg.showConfirm(`آیا مطمئن هستید که فایل «${path}» حذف شود؟`)
+    : window.confirm(`پاک کردن فایل ${path}؟`);
+  if (!confirmed) return;
   try {
     const data = await callServerlessEndpoint('studio', { action: 'deleteFile', path });
     el.editorPath.value = '';
     el.editorContent.value = '';
     renderState({ activeProject: appState.activeProject, files: data.files });
     switchTab('files');
-    showToast('🗑️ فایل حذف شد');
+    showSuccess('فایل حذف شد');
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
@@ -369,10 +652,44 @@ el.btnExportZip.addEventListener('click', async () => {
   try {
     showToast('📦 در حال ارسال ZIP به چت تلگرام...');
     await callServerlessEndpoint('studio', { action: 'exportZipToChat' });
-    showToast('✅ فایل ZIP به چت شما ارسال شد!');
+    showSuccess('فایل ZIP به چت شما ارسال شد!');
   } catch (err) {
-    showToast(err.message);
+    showError(err);
   }
 });
 
+/*───────────────────────── Agent prompt ──*/
+el.promptForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const prompt = el.promptInput.value.trim();
+  if (!prompt) return;
+
+  el.promptInput.value = '';
+  appendMessage('user', prompt);
+  el.btnRunAgent.disabled = true;
+  el.btnRunAgent.textContent = '⏳...';
+  updateMainButton(appState.activeTab);
+
+  try {
+    const res = await callServerlessEndpoint('agent', { prompt });
+    const footer = `\n\n🌐 ${res.providerBadge} • ${res.model}${
+      res.routedVia ? ` (${res.routedVia})` : ''
+    }`;
+    appendMessage('assistant', `${res.text}${footer}`, res.toolLogs || []);
+    if (res.files) {
+      appState.files = res.files;
+      renderState({ activeProject: appState.activeProject, files: res.files });
+    }
+  } catch (err) {
+    showError(err);
+  } finally {
+    el.btnRunAgent.disabled = false;
+    el.btnRunAgent.textContent = 'اجرا 🚀';
+    updateMainButton(appState.activeTab);
+  }
+});
+
+/*───────────────────────── Boot ──*/
+updateMainButton(appState.activeTab);
+updateBackButton(appState.activeTab);
 loadInitialState();

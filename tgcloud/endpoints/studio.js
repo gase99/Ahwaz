@@ -2,6 +2,7 @@ import { EndpointError } from 'sdk';
 import {
   fetchLiveOpenCodeFreeModels,
   PROVIDER_LIST,
+  PROVIDER_HELP,
 } from '../lib/agent/providers.js';
 import {
   ensureUser,
@@ -49,6 +50,11 @@ export default async function studioEndpoint(input, ctx) {
       const files = await listWorkspaceFiles(userRow.tgId, activeProject);
       const auth = await resolveProviderAuth(userRow);
 
+      // وضعیت آمادگی هر سرویس (بدون نمایش کلید خود — فقط Boolean)
+      const providerStatuses = await Promise.all(
+        PROVIDER_LIST.map((spec) => resolveProviderAuth(userRow, spec.id)),
+      );
+
       return {
         ok: true,
         user: {
@@ -58,9 +64,32 @@ export default async function studioEndpoint(input, ctx) {
           provider: auth.providerId,
           model: auth.model,
           providerReady: auth.isReady,
+          providerMissingReason: auth.missingReason,
+          providerKeyConfigured: Boolean(auth.apiKey),
           baseUrl: auth.baseUrl,
         },
-        providers: PROVIDER_LIST,
+        providers: PROVIDER_LIST.map((spec, idx) => {
+          const status = providerStatuses[idx];
+          return {
+            id: spec.id,
+            title: spec.title,
+            shortBadge: spec.shortBadge,
+            protocol: spec.protocol,
+            defaultBaseUrl: spec.defaultBaseUrl,
+            defaultModel: spec.defaultModel,
+            requiresKey: spec.requiresKey,
+            requiresBaseUrl: spec.requiresBaseUrl,
+            signupHint: spec.signupHint,
+            models: spec.models,
+            isReady: status.isReady,
+            missingReason: status.missingReason,
+            apiKeyConfigured: Boolean(status.apiKey),
+          };
+        }),
+        providerHelp: Object.entries(PROVIDER_HELP).map(([id, help]) => ({
+          id,
+          ...help,
+        })),
         activeProject,
         projects,
         files,
