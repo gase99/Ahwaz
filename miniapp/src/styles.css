@@ -579,6 +579,302 @@ a {
   padding-top: 6px;
 }
 
+/* ── Cline-like Provider Cards ── */
+.provider-card {
+  background: var(--tg-surface);
+  border: 1px solid var(--tg-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.provider-card.active {
+  border-color: var(--tg-accent);
+  background: linear-gradient(135deg, var(--tg-surface), rgba(56, 189, 248, 0.08));
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.provider-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-name {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--tg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.provider-meta {
+  font-size: 0.68rem;
+  color: var(--tg-muted);
+  direction: ltr;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.status-ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.status-need {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.provider-missing {
+  font-size: 0.72rem;
+  color: var(--tg-muted);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.provider-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--tg-border);
+  padding-top: 8px;
+}
+
+.provider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.provider-row input,
+.provider-row select {
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  border: 1px solid var(--tg-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  direction: ltr;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.provider-row input::placeholder {
+  color: var(--tg-muted);
+}
+
+.provider-row select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
+  padding-right: 28px;
+}
+
+.provider-row button {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+}
+
+.btn-sm {
+  background: var(--tg-accent);
+  color: var(--tg-accent-text);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  transition: opacity 0.15s;
+}
+
+.btn-sm:hover {
+  opacity: 0.9;
+}
+
+.btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.provider-help-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--tg-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.provider-help-link:hover {
+  opacity: 0.9;
+}
+
+.key-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--tg-bg);
+  border: 1px solid var(--tg-border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--tg-muted);
+  z-index: 5;
+}
+
+.key-toggle:hover {
+  color: var(--tg-text);
+}
+
+/* ── Help cards (enhanced) ── */
+.help-card {
+  background: var(--tg-surface);
+  border: 1px solid var(--tg-border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.help-name {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--tg-text);
+}
+
+.tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.tag-ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.tag-need {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.help-desc {
+  font-size: 0.78rem;
+  color: var(--tg-muted);
+  line-height: 1.55;
+  margin: 2px 0 0;
+}
+
+.help-steps > div {
+  font-size: 0.78rem;
+  line-height: 1.6;
+  margin: 2px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.help-steps > div::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.7em;
+  width: 6px;
+  height: 6px;
+  background: var(--tg-accent);
+  border-radius: 50%;
+}
+
+.help-cmd {
+  font-size: 0.74rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  direction: ltr;
+  background: #0b1120;
+  color: #cbd5e1;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid var(--tg-border);
+}
+
+.help-links {
+  font-size: 0.74rem;
+  color: var(--tg-accent);
+  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.help-links a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.help-links a:hover {
+  opacity: 0.9;
+}
+
+.help-note {
+  font-size: 0.72rem;
+  color: var(--tg-muted);
+  line-height: 1.5;
+  border-top: 1px dashed var(--tg-border);
+  margin: 6px 0 0;
+  padding-top: 6px;
+}
+
 /* ── Help sections ── */
 .help-section {
   padding: 0 12px 12px;

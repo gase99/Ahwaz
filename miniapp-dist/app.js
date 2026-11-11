@@ -325,50 +325,90 @@ function renderProviders() {
 
 function providerCardHtml(spec, active, ready) {
   const chip = ready
-    ? '<span class="status status-ok">✅ تنظیم شده</span>'
-    : '<span class="status status-need">⚠️ نیازمند تنظیم</span>';
+    ? '<span class="status status-ok">✅ فعال</span>'
+    : '<span class="status status-need">⚠️ نیاز به تنظیم</span>';
   const missing = spec.missingReason
     ? `<div class="provider-missing">${escapeHtml(spec.missingReason)}</div>`
     : '';
 
-  let fields = '';
+  // Build fields HTML separately so we can insert a key-toggle for password inputs
+  let apiKeyHtml = '';
   if (spec.requiresKey) {
-    fields += `<input type="password" data-field="apiKey" dir="ltr" placeholder="کلید API${spec.apiKeyConfigured ? ' (فعلی مخفی است)' : ''}" />`;
+    const placeholder = spec.apiKeyConfigured
+      ? 'کلید API (فعلی مخفی است)'
+      : 'کلید API را وارد کنید';
+    apiKeyHtml = `
+      <div class="provider-row key-input-wrapper" style="position:relative;">
+        <input type="password" data-field="apiKey" dir="ltr" placeholder="${escapeHtml(placeholder)}" />
+        <button class="key-toggle" data-toggle-key="${escapeHtml(spec.id)}" title="نمایش/مخفی کردن کلید">👁️</button>
+      </div>
+    `;
   }
+
+  let baseUrlHtml = '';
   if (spec.requiresBaseUrl) {
-    fields += `<input type="url" data-field="baseUrl" dir="ltr" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ''}" />`;
+    baseUrlHtml = `<input type="url" data-field="baseUrl" dir="ltr" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ''}" />`;
   }
-  fields += `<select data-field="model">${spec.models
+
+  const modelOptions = spec.models
     .map(
       (m) =>
         `<option value="${escapeHtml(m.id)}" ${
           m.id === appState.activeModel ? 'selected' : ''
         }>${escapeHtml(m.label)}</option>`
     )
-    .join('')}</select>`;
-  fields += `<button class="btn-sm" data-provider="${escapeHtml(
-    spec.id
-  )}">${active ? 'فعال‌سازی و ذخیره' : 'ذخیره برای این سرویس'}</button>`;
+    .join('');
+
+  const modelHtml = `<select data-field="model">${modelOptions}</select>`;
+
+  const btnLabel = active ? 'فعال‌سازی و ذخیره' : 'ذخیره برای این سرویس';
+  const btnDisabled = !spec.requiresKey && !spec.requiresBaseUrl && ready;
 
   return `
-    <div class="provider-head">
-      <div class="provider-info">
-        <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
-        <div class="provider-meta">${escapeHtml(spec.title)} · ${spec.protocol}</div>
+    <div class="provider-card${active ? ' active' : ''}">
+      <div class="provider-head">
+        <div class="provider-info">
+          <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
+          <div class="provider-meta">${escapeHtml(spec.title)} · ${spec.protocol}</div>
+        </div>
+        ${chip}
       </div>
-      ${chip}
+      ${missing}
+      <div class="provider-fields">
+        ${apiKeyHtml}${baseUrlHtml}
+        <div class="provider-row">${modelHtml}</div>
+        <div class="provider-row"><button class="btn-sm" data-provider="${escapeHtml(
+    spec.id
+  )}"${btnDisabled ? ' disabled' : ''}>${btnLabel}</button></div>
+      </div>
+      <a class="provider-help-link" data-help-provider="${escapeHtml(
+        spec.id
+      )}">📘 راهنمای اتصال به ${escapeHtml(spec.title)}</a>
     </div>
-    ${missing}
-    <div class="provider-fields">
-      <div class="provider-row">${fields}</div>
-    </div>
-    <a class="provider-help-link" data-help-provider="${escapeHtml(
-      spec.id
-    )}">📘 راهنمای اتصال ${escapeHtml(spec.title)}</a>
   `;
 }
 
 el.providersGrid.addEventListener('click', async (e) => {
+  // Key show/hide toggle
+  const keyToggle = e.target.closest('button[data-toggle-key]');
+  if (keyToggle) {
+    const providerId = keyToggle.dataset.toggleKey;
+    const card = keyToggle.closest('.provider-card');
+    const input = card.querySelector('[data-field="apiKey"]');
+    if (input) {
+      if (input.type === 'password') {
+        input.type = 'text';
+        keyToggle.textContent = '🙈';
+        keyToggle.title = 'مخفی کردن کلید';
+      } else {
+        input.type = 'password';
+        keyToggle.textContent = '👁️';
+        keyToggle.title = 'نمایش کلید';
+      }
+    }
+    return;
+  }
+
   const saveBtn = e.target.closest('button[data-provider]');
   if (saveBtn) {
     const providerId = saveBtn.dataset.provider;
@@ -426,14 +466,14 @@ function helpCardHtml(h) {
   div.className = 'help-card';
   div.id = `help-${h.id}`;
   const tag = h.keyless
-    ? '<span class="tag tag-ok">🆓 بدون نیاز به کلید</span>'
+    ? '<span class="tag tag-ok">🆓 بدون کلید (رایگان)</span>'
     : '<span class="tag tag-need">🔑 نیاز به کلید API</span>';
   const steps = (h.steps || [])
     .map((s, i) => `<div>${i + 1}) ${escapeHtml(s)}</div>`)
     .join('');
-  const links = (h.links || []).length
-    ? (h.links || []).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join(' · ')
-    : '<span style="color: var(--tg-muted)">بدون لینک ثبت‌نام ثابت (قابل استفاده بدون ثبت‌نام)</span>';
+  const linksHtml = (h.links || []).length
+    ? (h.links || []).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">🔗 ${escapeHtml(l.label)}</a>`).join(' ')
+    : '<span style="color: var(--tg-muted)">بدون لینک ثبت‌نام ثابت</span>';
   const cmds = (h.commands || []).length
     ? `<div class="help-cmd">${(h.commands || []).join(' · ')}</div>`
     : '';
@@ -443,9 +483,9 @@ function helpCardHtml(h) {
       ${tag}
     </div>
     <div class="help-desc">${escapeHtml(h.summary)}</div>
-    ${steps}
+    <div class="help-steps">${steps}</div>
     ${cmds}
-    <div class="help-links">${links}</div>
+    <div class="help-links">${linksHtml}</div>
     ${h.note ? `<div class="help-note">💡 ${escapeHtml(h.note)}</div>` : ''}
   `;
   return div;

@@ -2,6 +2,7 @@ import { api } from 'sdk';
 import {
   fetchLiveOpenCodeFreeModels,
   getProviderSpec,
+  PROVIDER_HELP,
 } from '../lib/agent/providers.js';
 import {
   ensureUser,
@@ -78,9 +79,14 @@ export default async function handleCallbackQuery(query) {
 
   if (data === 'cb:providers') {
     await answerToast();
+    const statusMap = {};
+    for (const id of Object.keys(PROVIDER_HELP)) {
+      const auth = await resolveProviderAuth(userRow, id);
+      statusMap[id] = { isReady: auth.isReady };
+    }
     await safeEdit(
       `🌐 سرویس هوش مصنوعی مورد نظر خود را انتخاب کنید:\n(سرویس فعلی: ${getProviderSpec(activeProvider).title})`,
-      buildProvidersKeyboard(activeProvider),
+      buildProvidersKeyboard(activeProvider, statusMap),
     );
     return;
   }
@@ -207,6 +213,30 @@ export default async function handleCallbackQuery(query) {
       ].join('\n'),
       buildMainDashboardKeyboard(miniAppUrl),
     );
+    return;
+  }
+
+  if (data === 'cb:guide_all') {
+    await answerToast();
+    const lines = [
+      '📘 راهنمای اتصال همه ارائه‌دهندگان',
+      '',
+      'برای راهنمای کامل هر یک از دستور `/guide <provider_id>` استفاده کنید:',
+      '',
+    ];
+    for (const [id, help] of Object.entries(PROVIDER_HELP)) {
+      const auth = await resolveProviderAuth(userRow, id);
+      const ready = auth.isReady ? '✅' : '⚠️';
+      lines.push(
+        `${ready} **${help.title}**${help.keyless ? ' (رایگان، بدون کلید)' : ''}`,
+        `   ${help.summary}`,
+        ...(help.commands || []).length ? [`   دستور: ${help.commands.join(' · ')}`] : [],
+        '',
+      );
+    }
+    lines.push('🔑 ثبت کلید: `/setkey <provider_id> <API_KEY>`');
+    lines.push('🌐 انتخاب سرویس: `/provider <provider_id>`');
+    await safeEdit(lines.join('\n'), buildMainDashboardKeyboard(miniAppUrl));
     return;
   }
 

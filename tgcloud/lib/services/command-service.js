@@ -3,6 +3,7 @@ import {
   fetchLiveOpenCodeFreeModels,
   getProviderSpec,
   inferProviderFromApiKey,
+  PROVIDER_HELP,
   PROVIDERS,
 } from '../agent/providers.js';
 import {
@@ -44,6 +45,7 @@ const BOT_COMMANDS_MENU = [
   { command: 'opencode', description: 'مدل‌های رایگان کدنویسی OpenCode Zen' },
   { command: 'freellm', description: 'اتصال به روتر FreeLLMAPI یا ApiFreeLLM' },
   { command: 'model', description: 'انتخاب مدل کدنویسی' },
+  { command: 'guide', description: 'راهنمای اتصال به ارائه‌دهنده و مدل' },
   { command: 'project', description: 'مدیریت پروژه‌ها در SQLite' },
   { command: 'files', description: 'مشاهده فایل‌های پروژه فعال' },
   { command: 'zip', description: 'دانلود کل پروژه به صورت فایل ZIP' },
@@ -129,6 +131,7 @@ export async function handleSlashCommand(msg, userRow) {
         `• \`/freellm <URL_OR_KEY> [KEY]\` — اتصال به روتر **FreeLLMAPI** یا سرویس **ApiFreeLLM.com**`,
         `• \`/setkey [provider] <KEY>\` — ثبت امن کلید هر سرویس (حذف خودکار پیام)`,
         `• \`/model [model_id]\` — تغییر سریع مدل کدنویسی`,
+        \`• \`/guide [provider_id]\` — راهنمای اتصال به ارائه‌دهنده و مدل\`,
         ``,
         `🛠️ **دستورات مدیریت پروژه و GitHub:**`,
         `• \`/project <name>\` — ساخت یا سوییچ بین پروژه‌ها`,
@@ -149,20 +152,85 @@ export async function handleSlashCommand(msg, userRow) {
         const nextProv = argText.toLowerCase();
         const updated = await setActiveProviderAndModel(userRow.tgId, nextProv);
         const spec = getProviderSpec(updated.provider);
+        const auth = await resolveProviderAuth(userRow, nextProv);
+        const help = PROVIDER_HELP[nextProv];
+        const statusLine = auth.isReady
+          ? '✅ آماده به کار'
+          : `⚠️ نیاز به تنظیم: ${auth.missingReason || 'کلید/آدرس ثبت نشده'}`;
+        const guideLines = help
+          ? [
+              '',
+              `📘 راهنمای اتصال به ${help.title}:`,
+              ...(help.steps || []).map((s, i) => `  ${i + 1}) ${s}`),
+              ...(help.links || []).length
+                ? [
+                    '',
+                    '🔗 لینک‌های کاربردی:',
+                    ...(help.links || []).map((l) => `  • ${l.label}: ${l.url}`),
+                  ]
+                : [],
+              ...(help.commands || []).length
+                ? [`
+💬 دستور: ${help.commands.join(' · ')}`]
+                : [],
+            ]
+          : [];
         await sendSafeText(
           chatId,
-          `✅ سرویس فعال به **${spec.title}** تغییر یافت.\n🧠 مدل پیش‌فرض: \`${updated.model}\`\n💡 ${spec.signupHint}`,
-          { reply_markup: buildModelsKeyboard(updated.provider, updated.model) },
+          [
+            `✅ سرویس فعال به **${spec.title}** تغییر یافت.`,
+            `🧠 مدل پیش‌فرض: \`${updated.model}\``,
+            `📊 وضعیت: ${statusLine}`,
+            ...guideLines,
+          ].join('
+'),
+          { reply_markup: buildModelsKeyboard(updated.provider, updated.model) }
         );
         return true;
       }
-      await sendSafeText(
-        chatId,
-        `🌐 **انتخاب سرویس هوش مصنوعی و مدل‌های رایگان:**\n\n• **🆓 OpenCode Zen**: مدل‌های رایگان کدنویسی مثل \`big-pickle\`، \`deepseek-v4.1-flash-free\` و \`glm-5.3-flash-free\`\n• **⚡ LLM7 & 🌸 Pollinations**: کاملاً رایگان و **بدون نیاز به هیچ کلید API**\n• **🔀 FreeLLMAPI & 🆓 ApiFreeLLM**: پشتیبانی بومی از روتر یکپارچه FreeLLMAPI و سایت ApiFreeLLM.com\n• **🌐 OpenRouter / ⚡ Groq / ✨ Gemini**: پشتیبانی کامل از مدل‌های رایگان و حرفه‌ای`,
-        { reply_markup: buildProvidersKeyboard(userRow.provider || 'opencode') },
+
+      const auth = await resolveProviderAuth(userRow);
+      const lines = [
+        '🌐 انتخاب سرویس هوش مصنوعی و وضعیت اتصال:',
+        `سرویس فعلی: **${auth.providerSpec.shortBadge}** (${auth.isReady ? '✅ آماده' : '⚠️ نیازمند تنظیم'})`,
+        `مدل فعلی: \`${auth.model}\``,
+        '',
+        '📋 فهرست ارائه‌دهندگان و راهنمای اتصال:',
+      ];
+
+      for (const [id, help] of Object.entries(PROVIDER_HELP)) {
+        const spec = getProviderSpec(id);
+        const providerAuth = await resolveProviderAuth(userRow, id);
+        const ready = providerAuth.isReady ? '✅' : '⚠️';
+        lines.push(
+          `${ready} **${help.title}**${help.keyless ? ' (رایگان، بدون کلید)' : ''}`,
+          `   ${help.summary}`,
+          providerAuth.isReady
+            ? '   وضعیت: آماده به کار'
+            : `   نیاز به تنظیم: ${providerAuth.missingReason || 'ثبت کلید/آدرس'}`,
+          ...(help.commands || []).length
+            ? [`   دستور: ${help.commands.join(' · ')}`]
+            : [],
+          ...(help.links || []).length
+            ? [`   لینک: ${help.links.map((l) => l.url).join(' · ')}`]
+            : [],
+          '',
+        );
+      }
+
+      lines.push(
+        '💡 برای انتخاب سرویس: `/provider <provider_id>`',
+        '💡 برای راهنمای اتصال کامل: `/guide <provider_id>`',
+        '💡 برای ثبت کلید: `/setkey <provider_id> <API_KEY>`',
       );
+
+      await sendSafeText(chatId, lines.join('
+'), {
+        reply_markup: buildProvidersKeyboard(userRow.provider || 'opencode'),
+      });
       return true;
     }
+
 
     case '/opencode': {
       if (argText) {
@@ -343,6 +411,71 @@ export async function handleSlashCommand(msg, userRow) {
           ? `✅ دسترسی کاربر \`${targetId}\` به ربات فعال شد.`
           : `🚫 دسترسی کاربر \`${targetId}\` لغو شد.`,
       );
+      return true;
+    }
+
+    case '/guide':
+    case '/connect': {
+      const targetId = argText ? argText.toLowerCase() : null;
+      if (targetId && PROVIDER_HELP[targetId]) {
+        const help = PROVIDER_HELP[targetId];
+        const spec = getProviderSpec(targetId);
+        const auth = await resolveProviderAuth(userRow, targetId);
+        const lines = [
+          `📘 راهنمای اتصال به **${help.title}**`,
+          '',
+          `📝 خلاصه: ${help.summary}`,
+          '',
+        ];
+        if (help.steps && help.steps.length) {
+          lines.push('🔢 مراحل اتصال:');
+          lines.push(...help.steps.map((s, i) => `  ${i + 1}) ${s}`));
+          lines.push('');
+        }
+        if (help.commands && help.commands.length) {
+          lines.push('💬 دستورات ربات:');
+          lines.push(`  ${help.commands.join(' · ')}`);
+          lines.push('');
+        }
+        if (help.links && help.links.length) {
+          lines.push('🔗 لینک‌های کاربردی:');
+          lines.push(...help.links.map((l) => `  • ${l.label}: ${l.url}`));
+          lines.push('');
+        }
+        lines.push(`📊 وضعیت فعلی: ${auth.isReady ? '✅ آماده به کار' : '⚠️ نیاز به تنظیم'}`);
+        if (!auth.isReady && auth.missingReason) {
+          lines.push(`   ${auth.missingReason}`);
+        }
+        lines.push('');
+        lines.push(`🧠 مدل پیش‌فرض: \`${spec.defaultModel}\``);
+        lines.push(`🔑 نیاز به کلید: ${help.keyless ? '❌ خیر (رایگان)' : '✅ بله'}`);
+        await sendSafeText(chatId, lines.join('
+'));
+        return true;
+      }
+
+      // Show all providers guide summary
+      const allLines = [
+        '📘 راهنمای اتصال به ارائه‌دهندگان هوش مصنوعی',
+        '',
+        'برای راهنمای کامل یک ارائه‌دهنده: `/guide <provider_id>`',
+        'نمونه: `/guide gemini` یا `/guide openrouter`',
+        '',
+        '📋 فهرست ارائه‌دهندگان:',
+      ];
+      for (const [id, help] of Object.entries(PROVIDER_HELP)) {
+        const auth = await resolveProviderAuth(userRow, id);
+        const ready = auth.isReady ? '✅' : '⚠️';
+        allLines.push(
+          `${ready} **${help.title}**${help.keyless ? ' (رایگان)' : ''}`,
+          `   ${help.summary}`,
+        );
+      }
+      allLines.push('');
+      allLines.push('🔑 ثبت کلید: `/setkey <provider_id> <API_KEY>`');
+      allLines.push('🌐 انتخاب سرویس: `/provider <provider_id>`');
+      await sendSafeText(chatId, allLines.join('
+'));
       return true;
     }
 

@@ -31,15 +31,21 @@ export function buildMainDashboardKeyboard(miniAppUrl = '') {
   return { inline_keyboard: rows };
 }
 
-export function buildProvidersKeyboard(activeProvider) {
+export function buildProvidersKeyboard(activeProvider, providerStatus = null) {
   const rows = [];
   for (let i = 0; i < PROVIDER_LIST.length; i += 2) {
-    const pair = PROVIDER_LIST.slice(i, i + 2).map((p) => ({
-      text: `${p.id === activeProvider ? '✅ ' : ''}${p.shortBadge}`,
-      callback_data: `cb:prov:${p.id}`,
-    }));
+    const pair = PROVIDER_LIST.slice(i, i + 2).map((p) => {
+      const isActive = p.id === activeProvider;
+      const status = providerStatus?.[p.id];
+      const ready = status ? (status.isReady ? '✅' : '⚠️') : '';
+      return {
+        text: `${ready}${isActive ? '🟢 ' : ''}${p.shortBadge}`,
+        callback_data: `cb:prov:${p.id}`,
+      };
+    });
     rows.push(pair);
   }
+  rows.push([{ text: '📘 راهنمای اتصال همه سرویس‌ها', callback_data: 'cb:guide_all' }]);
   rows.push([{ text: '🔙 بازگشت به داشبورد اصلی', callback_data: 'cb:home' }]);
   return { inline_keyboard: rows };
 }
