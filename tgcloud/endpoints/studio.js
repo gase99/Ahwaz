@@ -1,11 +1,16 @@
 import { EndpointError } from 'sdk';
 import {
   fetchLiveOpenCodeFreeModels,
-  PROVIDER_LIST,
+  fetchLiveOpenRouterFreeModels,
+  getProviderSpec,
   PROVIDER_HELP,
+  PROVIDER_LINKS_TABLE,
 } from '../lib/agent/providers.js';
 import {
+  buildUserProvidersSnapshot,
+  deleteProviderCredentials,
   ensureUser,
+  maskApiKey,
   resolveProviderAuth,
   saveProviderCredentials,
   saveUserGeminiKey,
@@ -14,6 +19,7 @@ import {
   setActiveProviderAndModel,
 } from '../lib/services/auth-service.js';
 import { deliverProjectZip } from '../lib/services/command-service.js';
+import { sendSafeText } from '../lib/services/delivery-service.js';
 import {
   deleteWorkspacePath,
   ensureProject,
@@ -23,32 +29,6 @@ import {
   sanitizeProjectName,
   writeWorkspaceFile,
 } from '../lib/services/workspace-service.js';
-
-async function buildProvidersPayload(userRow) {
-  const providerStatuses = await Promise.all(
-    PROVIDER_LIST.map((spec) => resolveProviderAuth(userRow, spec.id)),
-  );
-  return PROVIDER_LIST.map((spec, idx) => {
-    const status = providerStatuses[idx];
-    return {
-      id: spec.id,
-      title: spec.title,
-      shortBadge: spec.shortBadge,
-      protocol: spec.protocol,
-      defaultBaseUrl: spec.defaultBaseUrl,
-      baseUrl: status.baseUrl,
-      defaultModel: spec.defaultModel,
-      requiresKey: spec.requiresKey,
-      acceptsOptionalKey: Boolean(spec.acceptsOptionalKey),
-      requiresBaseUrl: Boolean(spec.requiresBaseUrl),
-      signupHint: spec.signupHint,
-      models: spec.models,
-      isReady: status.isReady,
-      missingReason: status.missingReason,
-      apiKeyConfigured: Boolean(status.apiKey),
-    };
-  });
-}
 
 export default async function studioEndpoint(input, ctx) {
   const caller = ctx?.initData?.user;
@@ -72,10 +52,12 @@ export default async function studioEndpoint(input, ctx) {
     case 'state':
     case 'bootstrap': {
       await ensureProject(userRow.tgId, activeProject);
-      const projects = await listProjects(userRow.tgId);
-      const files = await listWorkspaceFiles(userRow.tgId, activeProject);
-      const auth = await resolveProviderAuth(userRow);
-      const providers = await buildProvidersPayload(userRow);
+      const [projects, files, auth, providers] = await Promise.all([
+        listProjects(userRow.tgId),
+        listWorkspaceFiles(userRow.tgId, activeProject),
+        resolveProviderAuth(userRow),
+        buildUserProvidersSnapshot(userRow),
+      ]);
 
       return {
         ok: true,
@@ -84,17 +66,23 @@ export default async function studioEndpoint(input, ctx) {
           firstName: userRow.firstName,
           isAdmin: Boolean(userRow.isAdmin),
           provider: auth.providerId,
+          providerBadge: auth.providerSpec.shortBadge,
           model: auth.model,
           providerReady: auth.isReady,
+          isProviderReady: auth.isReady,
           providerMissingReason: auth.missingReason,
+          missingReason: auth.missingReason,
           providerKeyConfigured: Boolean(auth.apiKey),
           baseUrl: auth.baseUrl,
+          promptCount: userRow.promptCount,
+          toolCallCount: userRow.toolCallCount,
         },
         providers,
         providerHelp: Object.entries(PROVIDER_HELP).map(([id, help]) => ({
           id,
           ...help,
         })),
+        linksTable: PROVIDER_LINKS_TABLE,
         activeProject,
         projects,
         files,
@@ -110,28 +98,95 @@ export default async function studioEndpoint(input, ctx) {
           await setActiveModel(userRow.tgId, chosenModel);
           userRow.model = chosenModel;
         }
-        const providers = await buildProvidersPayload(userRow);
+        const providers = await buildUserProvidersSnapshot(userRow);
         return { ok: true, provider: 'gemini', model: chosenModel, providers };
       }
 
       const providerId = String(input?.providerId || userRow.provider || 'opencode');
-      const model = input?.model ? String(input.model) : null;
-      if (input?.apiKey || input?.baseUrl) {
-        await saveProviderCredentials(userRow, providerId, {
+      const spec = getProviderSpec(providerId);
+      const hasNewKey =
+        typeof input?.apiKey === 'string' && input.apiKey.trim().length > 0;
+      const hasNewUrl =
+        typeof input?.baseUrl === 'string' && input.baseUrl.trim().length > 0;
+
+      if (hasNewKey || hasNewUrl) {
+        await saveProviderCredentials(userRow, spec.id, {
           apiKey: input.apiKey,
           baseUrl: input.baseUrl,
         });
       }
-      const updated = await setActiveProviderAndModel(userRow.tgId, providerId, model);
+
+      const updated = await setActiveProviderAndModel(
+        userRow.tgId,
+        spec.id,
+        input?.model ? String(input.model) : null,
+      );
       userRow.provider = updated.provider;
       userRow.model = updated.model;
-      const providers = await buildProvidersPayload(userRow);
-      return { ok: true, ...updated, providers };
+
+      const [auth, providers] = await Promise.all([
+        resolveProviderAuth(userRow),
+        buildUserProvidersSnapshot(userRow),
+      ]);
+
+      if (input?.notifyChat && (hasNewKey || hasNewUrl)) {
+        const masked = hasNewKey ? maskApiKey(input.apiKey) : '';
+        await sendSafeText(
+          userRow.tgId,
+          [
+            `🔐 تنظیمات سرویس **${spec.shortBadge}** از طریق **Mini App** ذخیره و همگام شد!`,
+            ...(masked ? [`• کلید ثبت‌شده: \`${masked}\``] : []),
+            ...(hasNewUrl ? [`• آدرس سرور: \`${input.baseUrl.trim()}\``] : []),
+            `• مدل فعال فعلی: \`${updated.model}\``,
+          ].join('\n'),
+        ).catch(() => undefined);
+      }
+
+      return {
+        ok: true,
+        ...updated,
+        isReady: auth.isReady,
+        missingReason: auth.missingReason,
+        providers,
+      };
+    }
+
+    case 'deleteKey':
+    case 'delete_key': {
+      const providerId = String(input?.providerId || '').trim();
+      const spec = getProviderSpec(providerId);
+      await deleteProviderCredentials(userRow, spec.id);
+
+      const [auth, providers] = await Promise.all([
+        resolveProviderAuth(userRow),
+        buildUserProvidersSnapshot(userRow),
+      ]);
+
+      if (input?.notifyChat) {
+        await sendSafeText(
+          userRow.tgId,
+          `🗑️ کلید ذخیره‌شده سرویس **${spec.shortBadge}** از طریق **Mini App** حذف شد.\n🌐 سرویس فعال فعلی: **${auth.providerSpec.shortBadge}** (\`${auth.model}\`)`,
+        ).catch(() => undefined);
+      }
+
+      return {
+        ok: true,
+        provider: auth.providerId,
+        model: auth.model,
+        isReady: auth.isReady,
+        providers,
+      };
     }
 
     case 'syncOpenCodeModels': {
       const auth = await resolveProviderAuth(userRow, 'opencode');
       const models = await fetchLiveOpenCodeFreeModels(auth.apiKey);
+      return { ok: true, models };
+    }
+
+    case 'syncOpenRouterModels': {
+      const auth = await resolveProviderAuth(userRow, 'openrouter');
+      const models = await fetchLiveOpenRouterFreeModels(auth.apiKey);
       return { ok: true, models };
     }
 
@@ -153,14 +208,18 @@ export default async function studioEndpoint(input, ctx) {
         input?.content ?? '',
       );
       const files = await listWorkspaceFiles(userRow.tgId, activeProject);
-      return { ok: true, path: saved.path, files };
+      return { ok: true, saved: true, path: saved.path, files };
     }
 
     case 'deleteFile':
     case 'delete_file': {
-      await deleteWorkspacePath(userRow.tgId, activeProject, input?.path || '');
+      const deleted = await deleteWorkspacePath(
+        userRow.tgId,
+        activeProject,
+        input?.path || '',
+      );
       const files = await listWorkspaceFiles(userRow.tgId, activeProject);
-      return { ok: true, files };
+      return { ok: true, deleted, files };
     }
 
     case 'switchProject':
@@ -168,8 +227,10 @@ export default async function studioEndpoint(input, ctx) {
       const name = sanitizeProjectName(input?.projectName || 'default');
       await ensureProject(userRow.tgId, name);
       await setActiveProject(userRow.tgId, name);
-      const projects = await listProjects(userRow.tgId);
-      const files = await listWorkspaceFiles(userRow.tgId, name);
+      const [projects, files] = await Promise.all([
+        listProjects(userRow.tgId),
+        listWorkspaceFiles(userRow.tgId, name),
+      ]);
       return { ok: true, activeProject: name, projects, files };
     }
 

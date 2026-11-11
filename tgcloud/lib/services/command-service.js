@@ -4,9 +4,13 @@ import {
   getProviderSpec,
   inferProviderFromApiKey,
   PROVIDER_HELP,
+  PROVIDER_LIST,
   PROVIDERS,
 } from '../agent/providers.js';
 import {
+  buildUserProvidersSnapshot,
+  countStoredUserKeys,
+  deleteProviderCredentials,
   getSetting,
   resolveGithubToken,
   resolveProviderAuth,
@@ -25,11 +29,14 @@ import {
   pushWorkspaceToGithub,
 } from './github-service.js';
 import {
+  buildGroupedModelsKeyboard,
+  buildKeysManagementKeyboard,
   buildMainDashboardKeyboard,
   buildModelsKeyboard,
   buildProjectsKeyboard,
   buildProvidersKeyboard,
 } from './keyboard-service.js';
+import { testProviderConnection } from './key-test-service.js';
 import {
   ensureProject,
   exportProjectZipBytes,
@@ -41,11 +48,12 @@ import {
 
 const BOT_COMMANDS_MENU = [
   { command: 'start', description: 'داشبورد ایجنت و وضعیت سرویس‌ها' },
+  { command: 'keys', description: 'وضعیت کلیدهای API، تست اتصال و حذف کلید' },
+  { command: 'model', description: 'انتخاب مدل گروه‌بندی‌شده یا /model list' },
   { command: 'provider', description: 'انتخاب سرویس رایگان (OpenCode / FreeLLM / Gemini)' },
   { command: 'opencode', description: 'مدل‌های رایگان کدنویسی OpenCode Zen' },
   { command: 'freellm', description: 'اتصال به روتر FreeLLMAPI یا ApiFreeLLM' },
-  { command: 'model', description: 'انتخاب مدل کدنویسی' },
-  { command: 'guide', description: 'راهنمای اتصال به ارائه‌دهنده و مدل' },
+  { command: 'guide', description: 'راهنمای اتصال و دریافت کلید رایگان' },
   { command: 'project', description: 'مدیریت پروژه‌ها در SQLite' },
   { command: 'files', description: 'مشاهده فایل‌های پروژه فعال' },
   { command: 'zip', description: 'دانلود کل پروژه به صورت فایل ZIP' },
@@ -75,6 +83,124 @@ export async function deliverProjectZip(chatId, tgId, projectName) {
     caption: `📦 آرشیو پروژه «${projectName}» شامل ${count} فایل`,
   });
   return { ok: true, count };
+}
+
+/**
+ * Builds the formatted `/keys` status overview text + snapshot for both slash commands & inline callbacks.
+ */
+export async function buildKeysDashboardReport(userRow) {
+  const [providersSnapshot, storedKeysCount] = await Promise.all([
+    buildUserProvidersSnapshot(userRow),
+    countStoredUserKeys(userRow.tgId),
+  ]);
+
+  const connectedCount = providersSnapshot.filter(
+    (p) => p.status !== 'invalid' && p.isReady,
+  ).length;
+  const invalidCount = providersSnapshot.filter((p) => p.status === 'invalid').length;
+
+  const lines = [
+    `🔌 **وضعیت کلیدهای API و اتصال سرویس‌ها**`,
+    `• سرویس‌های آماده اتصال: **${connectedCount} از ${providersSnapshot.length}**`,
+    `• کلیدهای ذخیره‌شده در دیتابیس SQLite: **${storedKeysCount}**`,
+    ...(invalidCount > 0 ? [`• ⚠️ نیازمند بررسی مجدد: **${invalidCount}**`] : []),
+    ``,
+  ];
+
+  for (const p of providersSnapshot) {
+    const isActive = p.id === (userRow.provider || 'opencode');
+    const badge =
+      p.status === 'invalid'
+        ? '⚠️ نامعتبر'
+        : p.isReady
+          ? '✅ متصل'
+          : '❌ متصل نیست';
+
+    const detailParts = [];
+    if (p.maskedKey) detailParts.push(`کلید: \`${p.maskedKey}\``);
+    else if (!p.requiresKey && !p.requiresBaseUrl) detailParts.push('رایگان بدون کلید');
+
+    if (p.lastLatencyMs && p.status === 'connected') {
+      detailParts.push(`تست: ${p.lastLatencyMs}ms`);
+    } else if (p.status === 'invalid' && p.lastError) {
+      detailParts.push(`خطا: ${p.lastError.slice(0, 55)}`);
+    }
+
+    lines.push(
+      `${isActive ? '🟢 ' : '• '}**${p.shortBadge}** — ${badge}${
+        detailParts.length ? `\n   └ ${detailParts.join(' | ')}` : ''
+      }`,
+    );
+  }
+
+  lines.push(
+    ``,
+    `💡 ثبت کلید جدید: \`/setkey <provider> <API_KEY>\``,
+    `💡 با دکمه‌های شیشه‌ای زیر می‌توانید هر اتصال را مستقیماً تست یا حذف کنید:`,
+  );
+
+  return {
+    text: lines.join('\n'),
+    providersSnapshot,
+    storedKeysCount,
+  };
+}
+
+/**
+ * Builds the formatted `/model list` text catalog across all 9 providers with ✅/❌ key status.
+ */
+export async function buildModelListReportText(userRow) {
+  const providersSnapshot = await buildUserProvidersSnapshot(userRow);
+  const activeProv = userRow.provider || 'opencode';
+  const activeMod = userRow.model || 'big-pickle';
+
+  const lines = [
+    `📋 **فهرست کامل مدل‌ها و وضعیت کلید سرویس‌ها**`,
+    `🎯 انتخاب فعلی شما: \`${activeMod}\` روی **${getProviderSpec(activeProv).shortBadge}**`,
+    ``,
+  ];
+
+  for (const p of providersSnapshot) {
+    const keyBadge =
+      p.status === 'invalid'
+        ? '⚠️ کلید نامعتبر'
+        : p.isReady
+          ? '✅ آماده'
+          : '❌ فاقد کلید';
+
+    lines.push(`**${p.shortBadge}** (${keyBadge}):`);
+    for (const m of p.models || []) {
+      const activeMark = p.id === activeProv && m.id === activeMod ? ' 👈 فعال' : '';
+      const costIcon = m.free !== false ? '🆓' : '💰';
+      const tierIcon = m.tier === 'fast' ? '⚡' : m.tier === 'smart' ? '🧠' : '';
+      const starIcon = m.recommended ? '⭐' : '';
+      lines.push(`  • ${starIcon}${costIcon}${tierIcon} \`${m.id}\`${activeMark}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(
+    `💡 تغییر مستقیم مدل: \`/model <model_id>\``,
+    `💡 منوی شیشه‌ای گروه‌بندی‌شده: \`/model\``,
+  );
+
+  return lines.join('\n');
+}
+
+function findProviderForModelId(modelId, currentProviderId) {
+  const clean = String(modelId ?? '').trim();
+  const currentSpec = getProviderSpec(currentProviderId);
+  if ((currentSpec.models || []).some((m) => m.id === clean)) {
+    return currentSpec.id;
+  }
+  for (const p of PROVIDER_LIST) {
+    if ((p.models || []).some((m) => m.id === clean)) {
+      return p.id;
+    }
+  }
+  if (clean.endsWith(':free')) return 'openrouter';
+  if (clean.startsWith('gemini-')) return 'gemini';
+  return currentSpec.id;
 }
 
 export async function handleSlashCommand(msg, userRow) {
@@ -113,35 +239,79 @@ export async function handleSlashCommand(msg, userRow) {
         await api.setMyCommands({ commands: BOT_COMMANDS_MENU }).catch(() => undefined);
       }
 
-      const auth = await resolveProviderAuth(userRow);
-      const ghToken = await resolveGithubToken(userRow);
+      const [auth, ghToken, storedKeys] = await Promise.all([
+        resolveProviderAuth(userRow),
+        resolveGithubToken(userRow),
+        countStoredUserKeys(userRow.tgId),
+      ]);
 
       const welcome = [
         `👋 خوش آمدید به **Ahwaz Serverless Coding Agent (v2.1)**!`,
-        `پشتیبانی کامل از **مدل‌های رایگان OpenCode Zen**، **FreeLLMAPI / ApiFreeLLM**، **LLM7 بدون کلید**، **OpenRouter :free**، **Groq** و **Google Gemini**!`,
+        `پشتیبانی یکپارچه از **OpenCode Zen**، **FreeLLMAPI / ApiFreeLLM**، **LLM7**، **Pollinations**، **OpenRouter :free**، **Groq** و **Google Gemini**!`,
         ``,
         `🌐 سرویس فعال: **${auth.providerSpec.shortBadge}** (${auth.isReady ? '✅ آماده به کار' : '⚠️ نیازمند تنظیم'})`,
         `🧠 مدل فعال: \`${auth.model}\``,
+        `🔑 کلیدهای ذخیره‌شده در دیتابیس: **${storedKeys}** (\`/keys\`)`,
         `📁 پروژه فعال: \`${activeProject}\``,
         `🐙 توکن GitHub: ${ghToken ? '✅ متصل' : '⚪ تنظیم نشده (/setghtoken)'}`,
         ``,
-        `🆓 **دستورات سرویس‌های رایگان هوش مصنوعی:**`,
-        `• \`/provider\` — منوی انتخاب سرویس (OpenCode, FreeLLMAPI, ApiFreeLLM, LLM7, Gemini...)`,
-        `• \`/opencode [API_KEY]\` — انتخاب مدل‌های رایگان **OpenCode Zen** یا ثبت کلید رایگان (\`opencode.ai/auth\`)`,
-        `• \`/freellm <URL_OR_KEY> [KEY]\` — اتصال به روتر **FreeLLMAPI** یا سرویس **ApiFreeLLM.com**`,
-        `• \`/setkey [provider] <KEY>\` — ثبت امن کلید هر سرویس (حذف خودکار پیام)`,
-        `• \`/model [model_id]\` — تغییر سریع مدل کدنویسی`,
-        `• \`/guide [provider_id]\` — راهنمای اتصال به ارائه‌دهنده و مدل`,
+        `🔑 **مدیریت کلیدها و انتخاب مدل:**`,
+        `• \`/keys\` — داشبورد وضعیت اتصال همه سرویس‌ها + دکمه‌های تست و حذف`,
+        `• \`/model\` — منوی شیشه‌ای گروه‌بندی‌شده مدل‌ها (\`/model list\` برای فهرست متنی کامل)`,
+        `• \`/setkey [provider] <KEY>\` — ثبت امن کلید در SQLite (حذف خودکار پیام)`,
+        `• \`/provider\` — تغییر سرویس هوش مصنوعی`,
+        `• \`/opencode [API_KEY]\` — مدل‌های رایگان **OpenCode Zen**`,
+        `• \`/freellm <URL_OR_KEY> [KEY]\` — اتصال به **FreeLLMAPI** یا **ApiFreeLLM.com**`,
+        `• \`/guide [provider_id]\` — راهنمای گام‌به‌گام دریافت کلید هر سرویس`,
         ``,
-        `🛠️ **دستورات مدیریت پروژه و GitHub:**`,
-        `• \`/project <name>\` — ساخت یا سوییچ بین پروژه‌ها`,
-        `• \`/files\` | \`/cat <path>\` | \`/zip\` — مدیریت و دانلود ZIP پروژه`,
-        `• \`/ghclone <owner/repo> [branch]\` | \`/ghpush <owner/repo> <msg>\` — اتصال GitHub`,
-        `• 📎 ارسال فایل کد یا آرشیو \`.zip\` در چت -> ایمپورت خودکار در پروژه!`,
+        `🛠️ **مدیریت پروژه و GitHub:**`,
+        `• \`/project <name>\` | \`/files\` | \`/cat <path>\` | \`/zip\``,
+        `• \`/ghclone <owner/repo> [branch]\` | \`/ghpush <owner/repo> <msg>\``,
       ].join('\n');
 
       await sendSafeText(chatId, welcome, {
         reply_markup: buildMainDashboardKeyboard(miniAppUrl),
+      });
+      return true;
+    }
+
+    case '/keys': {
+      const subParts = argText.split(/\s+/).filter(Boolean);
+      if (subParts.length >= 2 && ['test', 'delete', 'remove', 'del'].includes(subParts[0].toLowerCase())) {
+        const subCmd = subParts[0].toLowerCase();
+        const targetProv = subParts[1].toLowerCase();
+        if (!PROVIDERS[targetProv]) {
+          await sendSafeText(chatId, `⚠️ سرویس \`${targetProv}\` شناخته نشد.`);
+          return true;
+        }
+        const spec = getProviderSpec(targetProv);
+        if (subCmd === 'test') {
+          const testRes = await testProviderConnection({ userRow, providerId: spec.id });
+          const report = await buildKeysDashboardReport(userRow);
+          const header = testRes.success
+            ? `✅ تست اتصال **${spec.shortBadge}** موفق بود (${testRes.latency_ms}ms)!\n\n`
+            : `❌ تست اتصال **${spec.shortBadge}** ناموفق بود:\n${testRes.error}\n\n`;
+          await sendSafeText(chatId, `${header}${report.text}`, {
+            reply_markup: buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
+          });
+          return true;
+        }
+
+        await deleteProviderCredentials(userRow, spec.id);
+        const report = await buildKeysDashboardReport(userRow);
+        await sendSafeText(
+          chatId,
+          `🗑️ کلید سرویس **${spec.shortBadge}** با موفقیت از دیتابیس حذف شد.\n\n${report.text}`,
+          {
+            reply_markup: buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
+          },
+        );
+        return true;
+      }
+
+      const report = await buildKeysDashboardReport(userRow);
+      await sendSafeText(chatId, report.text, {
+        reply_markup: buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
       });
       return true;
     }
@@ -199,8 +369,13 @@ export async function handleSlashCommand(msg, userRow) {
 
       for (const [id, help] of Object.entries(PROVIDER_HELP)) {
         const providerAuth = await resolveProviderAuth(userRow, id);
-        statusMap[id] = { isReady: providerAuth.isReady };
-        const ready = providerAuth.isReady ? '✅' : '⚠️';
+        statusMap[id] = { isReady: providerAuth.isReady, status: providerAuth.status };
+        const ready =
+          providerAuth.status === 'invalid'
+            ? '⚠️'
+            : providerAuth.isReady
+              ? '✅'
+              : '❌';
         const shortMissing = providerAuth.missingReason
           ? providerAuth.missingReason.split('\n')[0]
           : 'ثبت کلید/آدرس';
@@ -222,7 +397,7 @@ export async function handleSlashCommand(msg, userRow) {
 
       lines.push(
         '💡 برای انتخاب سرویس: `/provider <provider_id>`',
-        '💡 برای راهنمای اتصال کامل: `/guide <provider_id>`',
+        '💡 برای مدیریت و تست کلیدها: `/keys`',
         '💡 برای ثبت کلید: `/setkey <provider_id> <API_KEY>`',
       );
 
@@ -232,7 +407,6 @@ export async function handleSlashCommand(msg, userRow) {
       return true;
     }
 
-
     case '/opencode': {
       if (argText) {
         await tryDeleteSecretMessage(chatId, msg.message_id);
@@ -240,7 +414,7 @@ export async function handleSlashCommand(msg, userRow) {
         const updated = await setActiveProviderAndModel(userRow.tgId, 'opencode', 'big-pickle');
         await sendSafeText(
           chatId,
-          `✅ کلید رایگان **OpenCode Zen** با امنیت کامل ذخیره شد (پیام حاوی کلید حذف گردید)!\n🧠 مدل فعال: \`${updated.model}\``,
+          `✅ کلید رایگان **OpenCode Zen** با امنیت کامل در دیتابیس ذخیره شد (پیام حاوی کلید حذف گردید)!\n🧠 مدل فعال: \`${updated.model}\``,
           { reply_markup: buildModelsKeyboard('opencode', updated.model) },
         );
         return true;
@@ -302,7 +476,7 @@ export async function handleSlashCommand(msg, userRow) {
       await setActiveProviderAndModel(userRow.tgId, 'apifreellm', 'apifreellm');
       await sendSafeText(
         chatId,
-        `✅ کلید سرویس **ApiFreeLLM.com** با موفقیت ذخیره و فعال شد (پیام کلید حذف گردید)!\nهم‌اکنون می‌توانید درخواست‌های کدنویسی خود را ارسال کنید.`,
+        `✅ کلید سرویس **ApiFreeLLM.com** با موفقیت در دیتابیس ذخیره و فعال شد (پیام کلید حذف گردید)!\nهم‌اکنون می‌توانید درخواست‌های کدنویسی خود را ارسال کنید.`,
       );
       return true;
     }
@@ -354,7 +528,7 @@ export async function handleSlashCommand(msg, userRow) {
 
       await sendSafeText(
         chatId,
-        `✅ کلید سرویس **${spec.shortBadge}** با موفقیت ذخیره شد (پیام حاوی کلید حذف گردید).\n🧠 مدل فعال فعلی: \`${updated.model}\``,
+        `✅ کلید سرویس **${spec.shortBadge}** با امنیت کامل در دیتابیس ذخیره شد (پیام حاوی کلید حذف گردید).\n🧠 مدل فعال فعلی: \`${updated.model}\`\n💡 این تنظیم به‌صورت خودکار با Mini App نیز همگام است.`,
         { reply_markup: buildModelsKeyboard(updated.provider, updated.model) },
       );
       return true;
@@ -430,8 +604,17 @@ export async function handleSlashCommand(msg, userRow) {
           '',
         ];
         if (help.steps && help.steps.length) {
-          lines.push('🔢 مراحل اتصال:');
+          lines.push('🔑 نحوه دریافت کلید:');
           lines.push(...help.steps.map((s, i) => `  ${i + 1}) ${s}`));
+          lines.push('');
+        }
+        if (help.freeModels && help.freeModels.length) {
+          lines.push('📋 مدل‌های رایگان موجود:');
+          lines.push(
+            ...help.freeModels.map((m) =>
+              typeof m === 'string' ? `  • \`${m}\`` : `  • \`${m.id}\` — ${m.desc}`,
+            ),
+          );
           lines.push('');
         }
         if (help.commands && help.commands.length) {
@@ -444,57 +627,104 @@ export async function handleSlashCommand(msg, userRow) {
           lines.push(...help.links.map((l) => `  • ${l.label}: ${l.url}`));
           lines.push('');
         }
-        lines.push(`📊 وضعیت فعلی: ${auth.isReady ? '✅ آماده به کار' : '⚠️ نیاز به تنظیم'}`);
+        if (help.note) {
+          lines.push(`💡 نکته: ${help.note}`);
+          lines.push('');
+        }
+        lines.push(`📊 وضعیت فعلی: ${auth.isReady ? '✅ آماده به کار' : '❌ متصل نیست'}`);
         if (!auth.isReady && auth.missingReason) {
           lines.push(`   ${auth.missingReason}`);
         }
-        lines.push('');
         lines.push(`🧠 مدل پیش‌فرض: \`${spec.defaultModel}\``);
-        lines.push(`🔑 نیاز به کلید: ${help.keyless ? '❌ خیر (رایگان)' : '✅ بله'}`);
         await sendSafeText(chatId, lines.join('\n'));
         return true;
       }
 
-      // Show all providers guide summary
       const allLines = [
         '📘 راهنمای اتصال به ارائه‌دهندگان هوش مصنوعی',
         '',
-        'برای راهنمای کامل یک ارائه‌دهنده: `/guide <provider_id>`',
+        'برای راهنمای کامل هر سرویس: `/guide <provider_id>`',
         'نمونه: `/guide gemini` یا `/guide openrouter`',
         '',
         '📋 فهرست ارائه‌دهندگان:',
       ];
       for (const [id, help] of Object.entries(PROVIDER_HELP)) {
         const auth = await resolveProviderAuth(userRow, id);
-        const ready = auth.isReady ? '✅' : '⚠️';
+        const ready = auth.isReady ? '✅' : '❌';
         allLines.push(
-          `${ready} **${help.title}**${help.keyless ? ' (رایگان)' : ''}`,
+          `${ready} **${help.title}**${help.keyless ? ' (رایگان بدون کلید)' : ''}`,
           `   ${help.summary}`,
         );
       }
       allLines.push('');
-      allLines.push('🔑 ثبت کلید: `/setkey <provider_id> <API_KEY>`');
-      allLines.push('🌐 انتخاب سرویس: `/provider <provider_id>`');
+      allLines.push('🔑 مدیریت کلیدها: `/keys` | ثبت کلید: `/setkey <provider_id> <API_KEY>`');
       await sendSafeText(chatId, allLines.join('\n'));
       return true;
     }
 
     case '/model':
     case '/models': {
-      const provId = userRow.provider || 'opencode';
+      const currentProv = userRow.provider || 'opencode';
+
+      // `/model list`: Full text list of all providers + models + key status (✅/❌)
+      if (argText.toLowerCase() === 'list') {
+        const listText = await buildModelListReportText(userRow);
+        await sendSafeText(chatId, listText);
+        return true;
+      }
+
+      // `/model <model_name>` or `/model <provider> <model_name>`: Direct switch
       if (argText) {
-        await setActiveModel(userRow.tgId, argText);
+        const tokens = argText.split(/\s+/).filter(Boolean);
+        let targetProv = currentProv;
+        let targetModel = argText.trim();
+
+        if (tokens.length >= 2 && PROVIDERS[tokens[0].toLowerCase()]) {
+          targetProv = tokens[0].toLowerCase();
+          targetModel = tokens.slice(1).join(' ');
+        } else {
+          targetProv = findProviderForModelId(targetModel, currentProv);
+        }
+
+        if (targetProv !== currentProv) {
+          await setActiveProviderAndModel(userRow.tgId, targetProv, targetModel);
+          userRow.provider = targetProv;
+          userRow.model = targetModel;
+        } else {
+          await setActiveModel(userRow.tgId, targetModel);
+          userRow.model = targetModel;
+        }
+
+        const auth = await resolveProviderAuth(userRow, targetProv);
+        const keyWarn = auth.isReady
+          ? '✅ وضعیت کلید سرویس: آماده به کار'
+          : `⚠️ توجه: کلید سرویس **${auth.providerSpec.shortBadge}** هنوز ثبت نشده است (\`/setkey ${targetProv} YOUR_KEY\`).`;
+
         await sendSafeText(
           chatId,
-          `✅ مدل فعال روی سرویس **${getProviderSpec(provId).shortBadge}** به \`${argText}\` تغییر یافت.`,
+          `✅ مدل فعال به \`${targetModel}\` روی سرویس **${getProviderSpec(targetProv).shortBadge}** تغییر یافت.\n${keyWarn}`,
         );
         return true;
       }
+
+      // `/model` (no args): Grouped inline keyboard by provider
+      const providersSnapshot = await buildUserProvidersSnapshot(userRow);
+      const auth = await resolveProviderAuth(userRow);
       await sendSafeText(
         chatId,
-        `🤖 **انتخاب مدل روی سرویس ${getProviderSpec(provId).title}**\nمدل فعلی: \`${userRow.model}\``,
+        [
+          `🤖 **انتخاب مدل کدنویسی (گروه‌بندی‌شده بر اساس سرویس)**`,
+          `• مدل فعال فعلی: \`${auth.model}\``,
+          `• سرویس فعال: **${auth.providerSpec.shortBadge}** (${auth.isReady ? '✅ متصل' : '❌ نیازمند کلید'})`,
+          ``,
+          `یک مدل از دسته فعال انتخاب کنید یا روی هر سرویس بزنید تا مدل‌های آن نمایش داده شود (برای فهرست متنی: \`/model list\`):`,
+        ].join('\n'),
         {
-          reply_markup: buildModelsKeyboard(provId, userRow.model),
+          reply_markup: buildGroupedModelsKeyboard(
+            providersSnapshot,
+            currentProv,
+            auth.model,
+          ),
         },
       );
       return true;
@@ -646,9 +876,12 @@ export async function handleSlashCommand(msg, userRow) {
     }
 
     case '/status': {
-      const files = await listWorkspaceFiles(userRow.tgId, activeProject);
-      const auth = await resolveProviderAuth(userRow);
-      const ghToken = await resolveGithubToken(userRow);
+      const [files, auth, ghToken, storedKeys] = await Promise.all([
+        listWorkspaceFiles(userRow.tgId, activeProject),
+        resolveProviderAuth(userRow),
+        resolveGithubToken(userRow),
+        countStoredUserKeys(userRow.tgId),
+      ]);
       await sendSafeText(
         chatId,
         [
@@ -657,6 +890,7 @@ export async function handleSlashCommand(msg, userRow) {
           `• کاربر: \`${userRow.tgId}\` (${userRow.isAdmin ? 'ادمین' : 'کاربر مجاز'})`,
           `• سرویس فعال: **${auth.providerSpec.title}** (${auth.isReady ? '✅ آماده' : '⚠️ نیازمند کلید/آدرس'})`,
           `• مدل فعال: \`${auth.model}\``,
+          `• کلیدهای ذخیره‌شده در دیتابیس: **${storedKeys}**`,
           `• پروژه فعال: \`${activeProject}\` (${files.length} فایل)`,
           `• تعداد پرامپت‌ها: ${userRow.promptCount || 0} | فراخوانی ابزارها: ${userRow.toolCallCount || 0}`,
           `• اتصال GitHub: ${ghToken ? '✅ فعال' : '⚪ غیرفعال'}`,

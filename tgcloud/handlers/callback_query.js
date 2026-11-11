@@ -1,10 +1,13 @@
 import { api } from 'sdk';
 import {
   fetchLiveOpenCodeFreeModels,
+  fetchLiveOpenRouterFreeModels,
   getProviderSpec,
   PROVIDER_HELP,
 } from '../lib/agent/providers.js';
 import {
+  buildUserProvidersSnapshot,
+  deleteProviderCredentials,
   ensureUser,
   getSetting,
   resolveProviderAuth,
@@ -12,18 +15,25 @@ import {
   setActiveProject,
   setActiveProviderAndModel,
 } from '../lib/services/auth-service.js';
-import { deliverProjectZip } from '../lib/services/command-service.js';
+import {
+  buildKeysDashboardReport,
+  buildModelListReportText,
+  deliverProjectZip,
+} from '../lib/services/command-service.js';
 import { clearConversationHistory } from '../lib/services/conversation-service.js';
 import {
   markdownToTelegramHtml,
   sendSafeText,
 } from '../lib/services/delivery-service.js';
 import {
+  buildGroupedModelsKeyboard,
+  buildKeysManagementKeyboard,
   buildMainDashboardKeyboard,
   buildModelsKeyboard,
   buildProjectsKeyboard,
   buildProvidersKeyboard,
 } from '../lib/services/keyboard-service.js';
+import { testProviderConnection } from '../lib/services/key-test-service.js';
 import { listProjects, listWorkspaceFiles } from '../lib/services/workspace-service.js';
 
 export default async function handleCallbackQuery(query) {
@@ -90,12 +100,56 @@ export default async function handleCallbackQuery(query) {
     return;
   }
 
+  // `/keys` dashboard & inline Test / Delete actions
+  if (data === 'cb:keys') {
+    await answerToast();
+    const report = await buildKeysDashboardReport(userRow);
+    await safeEdit(
+      report.text,
+      buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
+    );
+    return;
+  }
+
+  if (data.startsWith('cb:ktest:')) {
+    const provId = data.slice('cb:ktest:'.length);
+    const spec = getProviderSpec(provId);
+    const res = await testProviderConnection({ userRow, providerId: spec.id });
+    await answerToast(
+      res.success
+        ? `✅ ${spec.shortBadge}: اتصال برقرار (${res.latency_ms}ms)`
+        : `⚠️ ${spec.shortBadge}: تست ناموفق`,
+    );
+    const report = await buildKeysDashboardReport(userRow);
+    const banner = res.success
+      ? `✅ تست اتصال **${spec.shortBadge}** موفق بود (${res.latency_ms}ms)!\n\n`
+      : `❌ تست اتصال **${spec.shortBadge}** ناموفق بود:\n${res.error}\n\n`;
+    await safeEdit(
+      `${banner}${report.text}`,
+      buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
+    );
+    return;
+  }
+
+  if (data.startsWith('cb:kdel:')) {
+    const provId = data.slice('cb:kdel:'.length);
+    const spec = getProviderSpec(provId);
+    await deleteProviderCredentials(userRow, spec.id);
+    await answerToast(`🗑️ کلید ${spec.shortBadge} حذف شد`);
+    const report = await buildKeysDashboardReport(userRow);
+    await safeEdit(
+      `🗑️ کلید سرویس **${spec.shortBadge}** حذف شد.\n\n${report.text}`,
+      buildKeysManagementKeyboard(report.providersSnapshot, miniAppUrl),
+    );
+    return;
+  }
+
   if (data === 'cb:providers') {
     await answerToast();
     const statusMap = {};
     for (const id of Object.keys(PROVIDER_HELP)) {
       const auth = await resolveProviderAuth(userRow, id);
-      statusMap[id] = { isReady: auth.isReady };
+      statusMap[id] = { isReady: auth.isReady, status: auth.status };
     }
     await safeEdit(
       `🌐 سرویس هوش مصنوعی مورد نظر خود را انتخاب کنید:\n(سرویس فعلی: ${getProviderSpec(activeProvider).title})`,
@@ -124,13 +178,74 @@ export default async function handleCallbackQuery(query) {
     return;
   }
 
-  if (data === 'cb:models') {
+  // Grouped `/model` menu
+  if (data === 'cb:models' || data === 'cb:models_grouped') {
     await answerToast();
+    const providersSnapshot = await buildUserProvidersSnapshot(userRow);
+    const auth = await resolveProviderAuth(userRow);
     await safeEdit(
-      `🤖 انتخاب مدل روی سرویس ${getProviderSpec(activeProvider).shortBadge} (فعلی: ${userRow.model}):`,
-      buildModelsKeyboard(activeProvider, userRow.model),
+      `🤖 **انتخاب مدل گروه‌بندی‌شده بر اساس سرویس**\nمدل فعال: \`${auth.model}\` (${auth.providerSpec.shortBadge})`,
+      buildGroupedModelsKeyboard(providersSnapshot, activeProvider, auth.model),
     );
     return;
+  }
+
+  if (data === 'cb:model_list_text') {
+    await answerToast();
+    const text = await buildModelListReportText(userRow);
+    await sendSafeText(chatId, text);
+    return;
+  }
+
+  if (data.startsWith('cb:mprov:')) {
+    const provId = data.slice('cb:mprov:'.length);
+    const spec = getProviderSpec(provId);
+    const auth = await resolveProviderAuth(userRow, spec.id);
+    await answerToast();
+    await safeEdit(
+      `🤖 **مدل‌های سرویس ${spec.title}** (${auth.isReady ? '✅ آماده' : '❌ نیازمند کلید'}):\nیک مدل انتخاب کنید:`,
+      buildModelsKeyboard(
+        spec.id,
+        spec.id === activeProvider ? userRow.model : '',
+      ),
+    );
+    return;
+  }
+
+  if (data.startsWith('cb:pmodel:')) {
+    const rest = data.slice('cb:pmodel:'.length);
+    const sep = rest.indexOf(':');
+    if (sep !== -1) {
+      const provId = rest.slice(0, sep);
+      const chosenModel = rest.slice(sep + 1);
+      const updated = await setActiveProviderAndModel(userRow.tgId, provId, chosenModel);
+      const spec = getProviderSpec(updated.provider);
+      await answerToast(`✅ ${chosenModel}`);
+      await safeEdit(
+        `✅ مدل کدنویسی به \`${updated.model}\` روی سرویس **${spec.shortBadge}** تغییر یافت.`,
+        buildModelsKeyboard(updated.provider, updated.model),
+      );
+      return;
+    }
+  }
+
+  if (data.startsWith('cb:pmidx:')) {
+    const parts = data.slice('cb:pmidx:'.length).split(':');
+    if (parts.length >= 2) {
+      const provId = parts[0];
+      const idx = Number(parts[1]);
+      const spec = getProviderSpec(provId);
+      const modelObj = (spec.models || [])[idx];
+      if (modelObj) {
+        const updated = await setActiveProviderAndModel(userRow.tgId, spec.id, modelObj.id);
+        await answerToast(`✅ ${updated.model}`);
+        await safeEdit(
+          `✅ مدل کدنویسی به \`${updated.model}\` روی سرویس **${spec.shortBadge}** تغییر یافت.`,
+          buildModelsKeyboard(updated.provider, updated.model),
+        );
+        return;
+      }
+    }
   }
 
   if (data === 'cb:sync_opencode') {
@@ -151,12 +266,30 @@ export default async function handleCallbackQuery(query) {
     return;
   }
 
+  if (data === 'cb:sync_openrouter') {
+    await answerToast('🔄 در حال دریافت مدل‌های رایگان OpenRouter...');
+    try {
+      const auth = await resolveProviderAuth(userRow, 'openrouter');
+      const liveModels = await fetchLiveOpenRouterFreeModels(auth.apiKey);
+      await safeEdit(
+        `🌐 لیست زنده مدل‌های رایگان OpenRouter بروزرسانی شد (${liveModels.length} مدل):`,
+        buildModelsKeyboard('openrouter', userRow.model, liveModels),
+      );
+    } catch (err) {
+      await safeEdit(
+        `⚠️ خطا در استعلام زنده OpenRouter (${err?.message ?? err}):`,
+        buildModelsKeyboard('openrouter', userRow.model),
+      );
+    }
+    return;
+  }
+
   if (data.startsWith('cb:model:')) {
     const chosenModel = data.slice('cb:model:'.length);
     await setActiveModel(userRow.tgId, chosenModel);
     await answerToast(`✅ مدل فعال: ${chosenModel}`);
     await safeEdit(
-      `✅ مدل کدنویسی روی سرویس ${getProviderSpec(activeProvider).shortBadge} به ${chosenModel} تغییر یافت.`,
+      `✅ مدل کدنویسی روی سرویس ${getProviderSpec(activeProvider).shortBadge} به \`${chosenModel}\` تغییر یافت.`,
       buildModelsKeyboard(activeProvider, chosenModel),
     );
     return;
@@ -239,7 +372,7 @@ export default async function handleCallbackQuery(query) {
     ];
     for (const [id, help] of Object.entries(PROVIDER_HELP)) {
       const auth = await resolveProviderAuth(userRow, id);
-      const ready = auth.isReady ? '✅' : '⚠️';
+      const ready = auth.isReady ? '✅' : '❌';
       lines.push(
         `${ready} **${help.title}**${help.keyless ? ' (رایگان، بدون کلید)' : ''}`,
         `   ${help.summary}`,
@@ -247,8 +380,7 @@ export default async function handleCallbackQuery(query) {
         '',
       );
     }
-    lines.push('🔑 ثبت کلید: `/setkey <provider_id> <API_KEY>`');
-    lines.push('🌐 انتخاب سرویس: `/provider <provider_id>`');
+    lines.push('🔑 مدیریت کلیدها: `/keys` | ثبت کلید: `/setkey <provider_id> <API_KEY>`');
     await safeEdit(lines.join('\n'), buildMainDashboardKeyboard(miniAppUrl));
     return;
   }

@@ -1,11 +1,63 @@
+import { ApiKeysPanel } from './components/ApiKeysPanel.js';
+import { ConnectionsDashboard } from './components/ConnectionsDashboard.js';
+import { ModelSelector } from './components/ModelSelector.js';
+import { escapeHtml } from './components/ProviderCatalog.js';
+
 const tg = window.Telegram?.WebApp;
 
-/*───────────────────────── Telegram WebApp init ──*/
+/*───────────────────────── DOM refs ──*/
+const el = {
+  btnHeaderBack: document.getElementById('btnHeaderBack'),
+  btnHeaderConnections: document.getElementById('btnHeaderConnections'),
+  btnRefresh: document.getElementById('btnRefresh'),
+  modelSearchInput: document.getElementById('modelSearchInput'),
+  groupedModelSelect: document.getElementById('groupedModelSelect'),
+  modelPreviewBar: document.getElementById('modelPreviewBar'),
+  connectionsSummary: document.getElementById('connectionsSummary'),
+  connectionsGrid: document.getElementById('connectionsGrid'),
+  btnManageAllKeys: document.getElementById('btnManageAllKeys'),
+  keysSummaryBanner: document.getElementById('keysSummaryBanner'),
+  providersGrid: document.getElementById('providersGrid'),
+  providerLinksTable: document.getElementById('providerLinksTable'),
+  projectSelect: document.getElementById('projectSelect'),
+  btnNewProject: document.getElementById('btnNewProject'),
+  btnExportZip: document.getElementById('btnExportZip'),
+  tabFilesCount: document.getElementById('tabFilesCount'),
+  fileCount: document.getElementById('fileCount'),
+  fileList: document.getElementById('fileList'),
+  agentLog: document.getElementById('agentLog'),
+  promptForm: document.getElementById('promptForm'),
+  promptInput: document.getElementById('promptInput'),
+  btnRunAgent: document.getElementById('btnRunAgent'),
+  btnCreateFile: document.getElementById('btnCreateFile'),
+  btnRefreshFiles: document.getElementById('btnRefreshFiles'),
+  btnEditorBack: document.getElementById('btnEditorBack'),
+  editorPath: document.getElementById('editorPath'),
+  editorContent: document.getElementById('editorContent'),
+  btnSaveFile: document.getElementById('btnSaveFile'),
+  btnDeleteFile: document.getElementById('btnDeleteFile'),
+  helpGrid: document.getElementById('helpGrid'),
+  toast: document.getElementById('toast'),
+};
+
+const appState = {
+  activeTab: 'agent',
+  providers: [],
+  providerHelp: [],
+  linksTable: [],
+  activeProvider: 'opencode',
+  activeModel: 'big-pickle',
+  activeProject: 'default',
+  projects: [],
+  files: [],
+  user: {},
+};
+
+/*───────────────────────── Telegram WebApp theme & native buttons ──*/
 if (tg) {
   tg.ready();
   tg.expand();
 
-  // Sync CSS theme variables with the Telegram theme
   const theme = tg.themeParams || {};
   const setVar = (name, key, fallback) =>
     document.documentElement.style.setProperty(name, theme[key] ?? fallback);
@@ -41,7 +93,7 @@ function haptic(style = 'light') {
   tg?.HapticFeedback?.impactOccurred?.(style);
 }
 
-/*───────────────────────── Serverless calls ──*/
+/*───────────────────────── Serverless RPC ──*/
 async function callServerlessEndpoint(name, payload = {}) {
   if (tg?.Serverless?.call) {
     return await new Promise((resolve, reject) => {
@@ -67,40 +119,39 @@ async function callServerlessEndpoint(name, payload = {}) {
   return data?.result ?? data;
 }
 
-/*───────────────────────── Errors: meaning + what-to-do (Persian) ──*/
+/*───────────────────────── Persian Error Classification & Toast ──*/
 function classifyError(err) {
   const msg = String(err?.message ?? '');
   const low = msg.toLowerCase();
-  const status = err.status ?? null;
+  const status = err?.status ?? null;
 
-  const net = /failed to fetch|networkerror|net::err|timeout/i.test(msg);
-  if (net) {
+  if (/failed to fetch|networkerror|net::err|timeout/i.test(msg)) {
     return {
       code: 'NETWORK',
       title: 'اتصال برقرار نیست',
-      meaning: 'اتصال به اینترنت یا سرور تلگرام سرلس در دسترس نیست.',
-      fix: 'اتصال اینترنت را بررسی کنید، برنامه تلگرام را ببندید و دوباره باز کنید، سپس اقدام را تکرار کنید.',
+      meaning: 'اتصال اینترنت یا سرور Telegram Serverless در دسترس نیست.',
+      fix: 'اینترنت خود را بررسی کنید و روی دکمه 🔄 در بالای صفحه بزنید.',
     };
   }
 
-  const auth =
+  if (
     /از داخل تلگرام|احراز هویت|unauthorized/i.test(low) ||
     status === 401 ||
-    status === 403;
-  if (auth) {
+    status === 403
+  ) {
     if (/تایید نشده|forbidden/i.test(low) || status === 403) {
       return {
         code: 'FORBIDDEN',
         title: 'حساب تایید نشده',
-        meaning: 'حساب کاربری شما توسط ادمین ربات تایید نشده است.',
-        fix: 'با دستور `/whoami` شناسه عددی خود را دریافت کنید و از ادمین بخواهید دستور `/allow <شناسه>` را اجرا کند.',
+        meaning: 'حساب کاربری شما هنوز توسط ادمین ربات مجاز نشده است.',
+        fix: 'در چت ربات دستور `/whoami` را بزنید و از ادمین بخواهید `/allow <ID>` را اجرا کند.',
       };
     }
     return {
       code: 'UNAUTHORIZED',
       title: 'فقط از داخل تلگرام',
-      meaning: 'مینی آپ باید از طریق چت ربات تلگرام باز شود (دکمه Code Studio).',
-      fix: 'باز کردن لینک مستقیماً در مرورگر عادی کار نمی‌کند. در چت ربات خود، دکمه «باز کردن Code Studio (Mini App)» را بزنید.',
+      meaning: 'مینی‌اپ باید از طریق دکمه Code Studio در چت تلگرام باز شود.',
+      fix: 'لینک را در مرورگر خارجی باز نکنید؛ از داخل چت ربات وارد شوید.',
     };
   }
 
@@ -108,63 +159,25 @@ function classifyError(err) {
     return {
       code: 'NOT_FOUND',
       title: 'یافت نشد',
-      meaning: 'فایل، پروژه یا آیتم مورد نظر وجود ندارد.',
-      fix: 'لیست را بروزرسانی کنید؛ ممکن است فایل حذف شده یا نام پروژه تغییر کرده باشد.',
+      meaning: 'فایل یا آیتم مورد نظر در پروژه پیدا نشد.',
+      fix: 'لیست فایل‌ها را بروزرسانی کنید.',
     };
   }
 
-  if (/خالی|empty_prompt/i.test(low)) {
-    return {
-      code: 'EMPTY_PROMPT',
-      title: 'پیام خالی',
-      meaning: 'متن درخواست کدنویسی خالی است.',
-      fix: 'متن درخواست را در فیلد ورودی بنویسید و دکمه اجرا را بزنید.',
-    };
-  }
-
-  if (/محدودیت|rate limit/i.test(low) || status === 429) {
+  if (/محدودیت|rate limit|429/i.test(low) || status === 429) {
     return {
       code: 'RATE_LIMIT',
       title: 'محدودیت تعداد درخواست',
-      meaning: 'سقف تعداد درخواست‌های به سرویس هوش مصنوعی عبور شد.',
-      fix: 'چند دقیقه صبر کنید یا سرویس/مدل رایگان دیگر (مثل LLM7 یا OpenCode) را انتخاب کنید.',
-    };
-  }
-
-  if (/opencode/i.test(low)) {
-    return {
-      code: 'OPENCODE_SYNC',
-      title: 'دریافت مدل‌های OpenCode شکست خورد',
-      meaning: 'لیست زنده مدل‌های رایگان از opencode.ai دریافت نشد.',
-      fix: 'اتصال اینترنت را بررسی کنید. مدل‌های پیش‌فرض همچنان قابل استفاده‌اند؛ برای سقف بالاتر کلید رایگان را از https://opencode.ai/auth ثبت کنید.',
-    };
-  }
-
-  if (/agent_error|خطا در اجرای ایجنت/i.test(low)) {
-    return {
-      code: 'AGENT_ERROR',
-      title: 'خطای سرویس هوش مصنوعی',
-      meaning:
-        'ارتباط با مدل هوش مصنوعی با خطا مواجه شد (کلید نامعتبر، آدرس سرور اشتباه یا پاسخ نامعتبر مدل).',
-      fix:
-        'در بخش تنظیمات کلید API و آدرس سرور را بررسی کنید؛ برای تست سریع بدون کلید، سرویس LLM7 یا OpenCode را انتخاب کنید.',
-    };
-  }
-
-  if (status && status >= 500) {
-    return {
-      code: 'SERVER',
-      title: 'خطای سرور',
-      meaning: 'خطایی در سرور تلگرام سرلس رخ داد.',
-      fix: 'بعداً دوباره امتحان کنید؛ در صورت تکرار، متن خطا را به پشتیبانی @webxplusx بفرستید.',
+      meaning: 'سقف موقت درخواست به سرویس هوش مصنوعی پر شده است.',
+      fix: 'چند لحظه صبر کنید یا از منوی بالا یکی دیگر از سرویس‌های رایگان (مثل LLM7 یا OpenCode) را انتخاب نمایید.',
     };
   }
 
   return {
-    code: 'UNKNOWN',
-    title: 'خطای ناشناخته',
-    meaning: msg || 'خطایی رخ داد.',
-    fix: 'متن خطا را کپی کرده و به توسعه‌دهنده (@webxplusx) بفرستید.',
+    code: 'GENERAL',
+    title: 'خطا در عملیات',
+    meaning: msg || 'خطای غیرمنتظره‌ای رخ داد.',
+    fix: 'کلید API یا آدرس سرور را در تب «🔑 کلیدها» بررسی و تست کنید.',
   };
 }
 
@@ -188,15 +201,15 @@ function confirmDialog(message) {
   return Promise.resolve(window.confirm(message));
 }
 
-function showError(err, blocking = true) {
+function showError(err, blocking = false) {
   const c = classifyError(err);
   console.error(`[Ahwaz][${c.code}]`, err);
-  const text = `❌ ${c.title}\n\n${c.meaning}\n\n🔧 ${c.fix}`;
+  const text = `❌ ${c.title}\n\n${c.meaning}\n\n🔧 راهنما: ${c.fix}`;
   if (blocking && tg?.showAlert) {
     tg.HapticFeedback?.notificationOccurred?.('error');
     return tg.showAlert(text);
   }
-  showToast(`❌ ${c.title}: ${c.meaning}`);
+  showToast(`❌ ${c.title}: ${c.meaning}`, 3600);
 }
 
 function showSuccess(msg) {
@@ -204,54 +217,178 @@ function showSuccess(msg) {
   haptic();
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text ?? '';
-  return div.innerHTML;
-}
+/*───────────────────────── Modular UI Components ──*/
+const modelSelector = new ModelSelector({
+  searchInput: el.modelSearchInput,
+  selectEl: el.groupedModelSelect,
+  previewEl: el.modelPreviewBar,
+  onSelectProviderModel: async ({ providerId, modelId }) => {
+    try {
+      const res = await callServerlessEndpoint('studio', {
+        action: 'setProvider',
+        providerId,
+        model: modelId,
+      });
+      applyStudioUpdate(res);
+      showSuccess(`مدل فعال: ${res.model} (${res.provider})`);
+    } catch (err) {
+      showError(err);
+      renderAllComponents();
+    }
+  },
+  onRequestConfigureProvider: (providerId) => {
+    switchTab('settings');
+    apiKeysPanel.focusProviderCard(providerId, true);
+  },
+});
 
-/*───────────────────────── DOM refs ──*/
-const el = {
-  providerSelect: document.getElementById('providerSelect'),
-  modelSelect: document.getElementById('modelSelect'),
-  btnRefresh: document.getElementById('btnRefresh'),
-  btnHeaderBack: document.getElementById('btnHeaderBack'),
-  btnEditorBack: document.getElementById('btnEditorBack'),
-  providersGrid: document.getElementById('providersGrid'),
-  btnSyncOpenCode: document.getElementById('btnSyncOpenCode'),
-  projectSelect: document.getElementById('projectSelect'),
-  btnNewProject: document.getElementById('btnNewProject'),
-  btnExportZip: document.getElementById('btnExportZip'),
-  tabFilesCount: document.getElementById('tabFilesCount'),
-  fileCount: document.getElementById('fileCount'),
-  fileList: document.getElementById('fileList'),
-  agentLog: document.getElementById('agentLog'),
-  promptForm: document.getElementById('promptForm'),
-  promptInput: document.getElementById('promptInput'),
-  btnRunAgent: document.getElementById('btnRunAgent'),
-  btnCreateFile: document.getElementById('btnCreateFile'),
-  btnRefreshFiles: document.getElementById('btnRefreshFiles'),
-  editorPath: document.getElementById('editorPath'),
-  editorContent: document.getElementById('editorContent'),
-  btnSaveFile: document.getElementById('btnSaveFile'),
-  btnDeleteFile: document.getElementById('btnDeleteFile'),
-  toast: document.getElementById('toast'),
-  helpGrid: document.getElementById('helpGrid'),
-};
+const apiKeysPanel = new ApiKeysPanel({
+  summaryContainer: el.keysSummaryBanner,
+  cardsContainer: el.providersGrid,
+  tableContainer: el.providerLinksTable,
+  onTestKey: async ({ providerId, apiKey, baseUrl }) => {
+    try {
+      const res = await callServerlessEndpoint('test_key', {
+        providerId,
+        apiKey,
+        baseUrl,
+      });
+      if (Array.isArray(res.providers)) {
+        appState.providers = res.providers;
+      }
+      if (res.success) {
+        apiKeysPanel.setInlineResult(providerId, {
+          ok: true,
+          message: `اتصال برقرار است (${res.latency_ms}ms)`,
+        });
+        showSuccess(`تست ${providerId} موفق بود (${res.latency_ms}ms)`);
+      } else {
+        apiKeysPanel.setInlineResult(providerId, {
+          ok: false,
+          message: res.error || 'اتصال برقرار نشد',
+        });
+        showToast(`⚠️ تست ناموفق: ${res.error || 'کلید یا آدرس را بررسی کنید'}`, 3600);
+      }
+      renderAllComponents();
+    } catch (err) {
+      apiKeysPanel.setInlineResult(providerId, {
+        ok: false,
+        message: err.message || 'خطا در تست اتصال',
+      });
+      showError(err);
+    }
+  },
+  onSaveKey: async ({ providerId, apiKey, baseUrl }) => {
+    try {
+      const res = await callServerlessEndpoint('studio', {
+        action: 'setProvider',
+        providerId,
+        apiKey,
+        baseUrl,
+        notifyChat: Boolean(apiKey || baseUrl),
+      });
+      apiKeysPanel.setInlineResult(providerId, null);
+      applyStudioUpdate(res);
+      showSuccess(
+        apiKey || baseUrl
+          ? `کلید/تنظیمات ${providerId} ذخیره و با چت همگام شد`
+          : `سرویس ${providerId} فعال شد`,
+      );
+    } catch (err) {
+      showError(err, true);
+    }
+  },
+  onDeleteKey: async ({ providerId }) => {
+    const ok = await confirmDialog(`آیا کلید ذخیره‌شده سرویس «${providerId}» حذف شود؟`);
+    if (!ok) return;
+    try {
+      const res = await callServerlessEndpoint('studio', {
+        action: 'deleteKey',
+        providerId,
+        notifyChat: true,
+      });
+      apiKeysPanel.setInlineResult(providerId, null);
+      applyStudioUpdate(res);
+      showSuccess(`کلید ${providerId} حذف شد`);
+    } catch (err) {
+      showError(err);
+    }
+  },
+  onSyncModels: async ({ providerId }) => {
+    try {
+      showToast(`🔄 دریافت لیست زنده مدل‌های ${providerId}...`);
+      const action =
+        providerId === 'openrouter' ? 'syncOpenRouterModels' : 'syncOpenCodeModels';
+      const res = await callServerlessEndpoint('studio', { action });
+      const target = appState.providers.find((p) => p.id === providerId);
+      if (target && Array.isArray(res.models)) {
+        target.models = res.models;
+      }
+      renderAllComponents();
+      showSuccess(`${res.models?.length || 0} مدل رایگان بروزرسانی شد`);
+    } catch (err) {
+      showError(err);
+    }
+  },
+});
 
-let appState = {
-  activeTab: 'agent',
-  providers: [],
-  providerHelp: [],
-  activeProvider: 'opencode',
-  activeModel: 'big-pickle',
-  activeProject: 'default',
-  projects: [],
-  files: [],
-  user: {},
-};
+const connectionsDashboard = new ConnectionsDashboard({
+  headerBadgeBtn: el.btnHeaderConnections,
+  summaryEl: el.connectionsSummary,
+  gridEl: el.connectionsGrid,
+  onJumpToKeyCard: (providerId) => {
+    switchTab('settings');
+    apiKeysPanel.focusProviderCard(providerId, true);
+  },
+  onChangeProviderModel: async (providerId) => {
+    if (providerId !== appState.activeProvider) {
+      try {
+        const res = await callServerlessEndpoint('studio', {
+          action: 'setProvider',
+          providerId,
+        });
+        applyStudioUpdate(res);
+      } catch (err) {
+        showError(err);
+        return;
+      }
+    }
+    modelSelector.focusSelector();
+  },
+  onRetestProvider: async (providerId) => {
+    try {
+      const res = await callServerlessEndpoint('test_key', { providerId });
+      if (Array.isArray(res.providers)) {
+        appState.providers = res.providers;
+      }
+      renderAllComponents();
+      if (res.success) {
+        showSuccess(`تست ${providerId} موفق (${res.latency_ms}ms)`);
+      } else {
+        showToast(`⚠️ تست ${providerId} ناموفق: ${res.error || 'خطا'}`, 3600);
+      }
+    } catch (err) {
+      showError(err);
+    }
+  },
+  onDisconnectProvider: async (providerId) => {
+    const ok = await confirmDialog(`آیا اتصال و کلید سرویس «${providerId}» قطع و حذف شود؟`);
+    if (!ok) return;
+    try {
+      const res = await callServerlessEndpoint('studio', {
+        action: 'deleteKey',
+        providerId,
+        notifyChat: true,
+      });
+      applyStudioUpdate(res);
+      showSuccess(`اتصال ${providerId} قطع شد`);
+    } catch (err) {
+      showError(err);
+    }
+  },
+});
 
-/*───────────────────────── Tabs & native buttons ──*/
+/*───────────────────────── Tabs & Navigation ──*/
 function switchTab(tabName) {
   document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
@@ -259,13 +396,15 @@ function switchTab(tabName) {
   document.querySelectorAll('.panel').forEach((panel) => {
     const active = panel.id === `panel-${tabName}`;
     panel.classList.toggle('active', active);
-    panel.classList.toggle('panel-mainbtn', active && (tabName === 'agent' || tabName === 'editor'));
+    panel.classList.toggle(
+      'panel-mainbtn',
+      active && (tabName === 'agent' || tabName === 'editor'),
+    );
   });
   appState.activeTab = tabName;
   updateMainButton(tabName);
   updateBackButton(tabName);
-  if (tabName === 'settings') renderProviders();
-  if (tabName === 'help') renderHelp();
+  renderAllComponents();
   haptic();
 }
 
@@ -293,250 +432,98 @@ document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
-el.btnHeaderBack.addEventListener('click', () => {
-  switchTab('agent');
-});
-el.btnEditorBack.addEventListener('click', () => {
-  switchTab('agent');
-});
+el.btnHeaderBack?.addEventListener('click', () => switchTab('agent'));
+el.btnEditorBack?.addEventListener('click', () => switchTab('agent'));
+el.btnHeaderConnections?.addEventListener('click', () => switchTab('connections'));
+el.btnManageAllKeys?.addEventListener('click', () => switchTab('settings'));
 
-/*───────────────────────── Providers & models ──*/
-function getProviderObj(id) {
-  return appState.providers.find((p) => p.id === id) || appState.providers[0];
+/*───────────────────────── State Sync & Rendering ──*/
+function applyStudioUpdate(res) {
+  if (!res) return;
+  if (Array.isArray(res.providers)) appState.providers = res.providers;
+  if (res.provider) appState.activeProvider = res.provider;
+  if (res.model) appState.activeModel = res.model;
+  renderAllComponents();
 }
 
-function renderProviderAndModels() {
-  el.providerSelect.innerHTML = '';
-  for (const p of appState.providers) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.shortBadge;
-    if (p.id === appState.activeProvider) opt.selected = true;
-    el.providerSelect.appendChild(opt);
-  }
-
-  const spec = getProviderObj(appState.activeProvider);
-  el.modelSelect.innerHTML = '';
-  if (spec) {
-    const models = [...(spec.models || [])];
-    if (!models.some((m) => m.id === appState.activeModel)) {
-      models.unshift({ id: appState.activeModel, label: appState.activeModel });
-    }
-    for (const m of models) {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.label;
-      if (m.id === appState.activeModel) opt.selected = true;
-      el.modelSelect.appendChild(opt);
-    }
-  }
-}
-
-function renderProviders() {
-  const grid = el.providersGrid;
-  grid.innerHTML = '';
-  const activeProvider = appState.activeProvider;
-  for (const spec of appState.providers) {
-    const active = spec.id === activeProvider;
-    const ready = Boolean(spec.isReady);
-    const card = document.createElement('div');
-    card.className = `provider-card${active ? ' active' : ''}`;
-    card.innerHTML = providerCardHtml(spec, active, ready);
-    grid.appendChild(card);
-  }
-}
-
-function providerCardHtml(spec, active, ready) {
-  const chip = ready
-    ? '<span class="status status-ok">✅ فعال</span>'
-    : '<span class="status status-need">⚠️ نیاز به تنظیم</span>';
-  const missing = spec.missingReason
-    ? `<div class="provider-missing">${escapeHtml(spec.missingReason)}</div>`
-    : '';
-
-  // Build fields HTML separately so we can insert a key-toggle for password inputs
-  let apiKeyHtml = '';
-  if (spec.requiresKey || spec.acceptsOptionalKey) {
-    const placeholder = spec.apiKeyConfigured
-      ? 'کلید API ثبت‌شده (برای جایگزینی وارد کنید)'
-      : spec.requiresKey
-        ? 'کلید API را وارد کنید'
-        : 'کلید API (اختیاری — برای سقف اختصاصی)';
-    apiKeyHtml = `
-      <div class="provider-row key-input-wrapper" style="position:relative;">
-        <input type="password" data-field="apiKey" dir="ltr" placeholder="${escapeHtml(placeholder)}" />
-        <button type="button" class="key-toggle" data-toggle-key="${escapeHtml(spec.id)}" title="نمایش/مخفی کردن کلید">👁️</button>
-      </div>
-    `;
-  }
-
-  let baseUrlHtml = '';
-  if (spec.requiresBaseUrl) {
-    baseUrlHtml = `<div class="provider-row"><input type="url" data-field="baseUrl" dir="ltr" value="${escapeHtml(spec.baseUrl || '')}" placeholder="آدرس سرور${spec.defaultBaseUrl ? ` (مثلاً ${spec.defaultBaseUrl})` : ' (مثلاً https://router.example.com/v1)'}" /></div>`;
-  }
-
-  const selectedModelId = active
-    ? appState.activeModel
-    : spec.defaultModel || spec.models?.[0]?.id || '';
-  const models = [...(spec.models || [])];
-  if (selectedModelId && !models.some((m) => m.id === selectedModelId)) {
-    models.unshift({ id: selectedModelId, label: selectedModelId });
-  }
-  const modelOptions = models
-    .map(
-      (m) =>
-        `<option value="${escapeHtml(m.id)}" ${
-          m.id === selectedModelId ? 'selected' : ''
-        }>${escapeHtml(m.label)}</option>`,
-    )
-    .join('');
-
-  const modelHtml = `<select data-field="model">${modelOptions}</select>`;
-
-  const btnLabel = active ? 'ذخیره تنظیمات این سرویس' : 'فعال‌سازی و ذخیره';
-
-  return `
-    <div class="provider-head">
-      <div class="provider-info">
-        <div class="provider-name">${escapeHtml(spec.shortBadge)}</div>
-        <div class="provider-meta">${escapeHtml(spec.title)} · ${escapeHtml(spec.protocol)}</div>
-      </div>
-      ${chip}
-    </div>
-    ${missing}
-    <div class="provider-fields">
-      ${apiKeyHtml}${baseUrlHtml}
-      <div class="provider-row">${modelHtml}</div>
-      <div class="provider-row"><button type="button" class="btn-sm" data-provider="${escapeHtml(
-        spec.id,
-      )}">${btnLabel}</button></div>
-    </div>
-    <a class="provider-help-link" data-help-provider="${escapeHtml(
-      spec.id,
-    )}">📘 راهنمای اتصال به ${escapeHtml(spec.title)}</a>
-  `;
-}
-
-el.providersGrid.addEventListener('click', async (e) => {
-  // Key show/hide toggle
-  const keyToggle = e.target.closest('button[data-toggle-key]');
-  if (keyToggle) {
-    const providerId = keyToggle.dataset.toggleKey;
-    const card = keyToggle.closest('.provider-card');
-    const input = card.querySelector('[data-field="apiKey"]');
-    if (input) {
-      if (input.type === 'password') {
-        input.type = 'text';
-        keyToggle.textContent = '🙈';
-        keyToggle.title = 'مخفی کردن کلید';
-      } else {
-        input.type = 'password';
-        keyToggle.textContent = '👁️';
-        keyToggle.title = 'نمایش کلید';
-      }
-    }
-    return;
-  }
-
-  const saveBtn = e.target.closest('button[data-provider]');
-  if (saveBtn) {
-    const providerId = saveBtn.dataset.provider;
-    const card = saveBtn.closest('.provider-card');
-    const apiKeyInput = card.querySelector('[data-field="apiKey"]');
-    const baseUrlInput = card.querySelector('[data-field="baseUrl"]');
-    const modelSelect = card.querySelector('[data-field="model"]');
-    const payload = {
-      action: 'setProvider',
-      providerId,
-      apiKey: apiKeyInput ? (apiKeyInput.value.trim() || undefined) : undefined,
-      baseUrl: baseUrlInput
-        ? baseUrlInput.value.trim() || undefined
-        : undefined,
-      model: modelSelect ? modelSelect.value.trim() || undefined : undefined,
-    };
-    try {
-      const res = await callServerlessEndpoint('studio', payload);
-      if (Array.isArray(res.providers)) appState.providers = res.providers;
-      appState.activeProvider = res.provider;
-      appState.activeModel = res.model;
-      renderProviderAndModels();
-      renderProviders();
-      showSuccess(`تنظیمات ${res.provider} ذخیره شد`);
-    } catch (err) {
-      showError(err);
-    }
-    return;
-  }
-
-  const helpLink = e.target.closest('[data-help-provider]');
-  if (helpLink) {
-    switchTab('help');
-    const target = document.getElementById(`help-${helpLink.dataset.helpProvider}`);
-    if (target) target.scrollIntoView({ behavior: 'smooth' });
-    return;
-  }
-});
-
-/*───────────────────────── Help panel ──*/
-function renderHelp() {
-  const grid = el.helpGrid;
-  grid.innerHTML = '';
+function renderHelpCards() {
+  if (!el.helpGrid) return;
+  el.helpGrid.innerHTML = '';
   for (const h of appState.providerHelp) {
-    grid.appendChild(helpCardHtml(h));
-  }
-  const hash = window.location.hash;
-  if (hash) {
-    const target = document.getElementById(hash.slice(1));
-    if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth' }), 50);
+    const div = document.createElement('div');
+    div.className = 'help-card';
+    div.id = `help-${h.id}`;
+    const tag = h.keyless
+      ? '<span class="tag tag-ok">🆓 بدون کلید</span>'
+      : '<span class="tag tag-need">🔑 نیازمند کلید رایگان</span>';
+    const cmds = (h.commands || []).length
+      ? `<div class="help-cmd">${(h.commands || [])
+          .map((c) => escapeHtml(String(c).replace(/^`+|`+$/g, '')))
+          .join(' · ')}</div>`
+      : '';
+    div.innerHTML = `
+      <div class="help-head">
+        <div class="help-name">${escapeHtml(h.title)}</div>
+        ${tag}
+      </div>
+      <div class="help-desc">${escapeHtml(h.summary)}</div>
+      ${cmds}
+      <button type="button" class="btn-ghost-sm" data-open-key-guide="${escapeHtml(h.id)}">
+        🔑 باز کردن کارت کلید و راهنمای گام‌به‌گام
+      </button>
+    `;
+    el.helpGrid.appendChild(div);
   }
 }
 
-function helpCardHtml(h) {
-  const div = document.createElement('div');
-  div.className = 'help-card';
-  div.id = `help-${h.id}`;
-  const tag = h.keyless
-    ? '<span class="tag tag-ok">🆓 بدون کلید (رایگان)</span>'
-    : '<span class="tag tag-need">🔑 نیاز به کلید API</span>';
-  const steps = (h.steps || [])
-    .map((s, i) => `<div>${i + 1}) ${escapeHtml(s)}</div>`)
-    .join('');
-  const linksHtml = (h.links || []).length
-    ? (h.links || []).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">🔗 ${escapeHtml(l.label)}</a>`).join(' ')
-    : '<span style="color: var(--tg-muted)">بدون لینک ثبت‌نام ثابت</span>';
-  const cmds = (h.commands || []).length
-    ? `<div class="help-cmd">${(h.commands || [])
-        .map((c) => escapeHtml(String(c).replace(/^`+|`+$/g, '')))
-        .join(' · ')}</div>`
-    : '';
-  div.innerHTML = `
-    <div class="help-head">
-      <div class="help-name">${escapeHtml(h.title)}</div>
-      ${tag}
-    </div>
-    <div class="help-desc">${escapeHtml(h.summary)}</div>
-    <div class="help-steps">${steps}</div>
-    ${cmds}
-    <div class="help-links">${linksHtml}</div>
-    ${h.note ? `<div class="help-note">💡 ${escapeHtml(h.note)}</div>` : ''}
-  `;
-  return div;
+el.helpGrid?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-open-key-guide]');
+  if (!btn) return;
+  switchTab('settings');
+  apiKeysPanel.focusProviderCard(btn.dataset.openKeyGuide, true);
+});
+
+function renderAllComponents() {
+  modelSelector.render({
+    providers: appState.providers,
+    activeProvider: appState.activeProvider,
+    activeModel: appState.activeModel,
+  });
+
+  connectionsDashboard.render({
+    providers: appState.providers,
+    activeProvider: appState.activeProvider,
+    activeModel: appState.activeModel,
+  });
+
+  apiKeysPanel.render({
+    providers: appState.providers,
+    providerHelp: appState.providerHelp,
+    linksTable: appState.linksTable,
+    activeProvider: appState.activeProvider,
+  });
+
+  renderHelpCards();
 }
 
-/*───────────────────────── State ──*/
 function renderState(state) {
   if (state.providers) appState.providers = state.providers;
   if (state.providerHelp) appState.providerHelp = state.providerHelp;
+  if (state.linksTable) appState.linksTable = state.linksTable;
   if (state.user) appState.user = state.user;
   if (state.user?.provider) appState.activeProvider = state.user.provider;
   if (state.user?.model) appState.activeModel = state.user.model;
   appState.activeProject = state.activeProject || appState.activeProject;
   appState.projects = state.projects || appState.projects;
-  appState.files = state.files || [];
+  appState.files = state.files || appState.files;
 
-  renderProviderAndModels();
+  renderAllComponents();
+
   if (el.tabFilesCount) {
     el.tabFilesCount.textContent = String(appState.files.length);
+  }
+  if (el.fileCount) {
+    el.fileCount.textContent = String(appState.files.length);
   }
 
   if (el.projectSelect) {
@@ -550,36 +537,42 @@ function renderState(state) {
     }
   }
 
-  if (el.fileCount) {
-    el.fileCount.textContent = String(appState.files.length);
-  }
-  el.fileList.innerHTML = '';
-  if (appState.files.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'msg system';
-    empty.textContent = 'هنوز فایلی در این پروژه وجود ندارد.';
-    el.fileList.appendChild(empty);
-  } else {
-    for (const f of appState.files) {
-      const li = document.createElement('li');
-      li.className = 'file-item';
-      li.innerHTML = `<span>📄 ${escapeHtml(f.path)}</span><span class="file-size">${f.sizeBytes} B</span>`;
-      li.addEventListener('click', () => openFileInEditor(f.path));
-      el.fileList.appendChild(li);
+  if (el.fileList) {
+    el.fileList.innerHTML = '';
+    if (appState.files.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'msg system';
+      empty.textContent = 'هنوز فایلی در این پروژه وجود ندارد.';
+      el.fileList.appendChild(empty);
+    } else {
+      for (const f of appState.files) {
+        const li = document.createElement('li');
+        li.className = 'file-item';
+        li.innerHTML = `<span>📄 ${escapeHtml(f.path)}</span><span class="file-size">${f.sizeBytes} B</span>`;
+        li.addEventListener('click', () => openFileInEditor(f.path));
+        el.fileList.appendChild(li);
+      }
     }
   }
 }
 
-async function loadInitialState() {
+async function loadInitialState({ silent = false } = {}) {
   try {
     const data = await callServerlessEndpoint('studio', { action: 'state' });
     renderState(data);
   } catch (err) {
-    showError(err);
+    if (!silent) showError(err, true);
   }
 }
 
-/*───────────────────────── Files ──*/
+// Two-way sync: automatically refresh Mini App state when user returns from Telegram chat
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadInitialState({ silent: true });
+  }
+});
+
+/*───────────────────────── Projects & Workspace Files ──*/
 async function openFileInEditor(path) {
   try {
     const data = await callServerlessEndpoint('studio', { action: 'readFile', path });
@@ -591,69 +584,6 @@ async function openFileInEditor(path) {
   }
 }
 
-function appendMessage(role, text, toolLogs = []) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  div.textContent = text;
-
-  if (toolLogs.length > 0) {
-    const toolsDiv = document.createElement('div');
-    toolsDiv.className = 'tool-pills';
-    toolsDiv.textContent = `🛠️ ابزارهای اجرا شده:\n${toolLogs.join('\n')}`;
-    div.appendChild(toolsDiv);
-  }
-
-  el.agentLog.appendChild(div);
-  el.agentLog.scrollTop = el.agentLog.scrollHeight;
-}
-
-/*───────────────────────── Provider / model switching ──*/
-el.providerSelect.addEventListener('change', async () => {
-  const nextProv = el.providerSelect.value;
-  try {
-    const res = await callServerlessEndpoint('studio', {
-      action: 'setProvider',
-      providerId: nextProv,
-    });
-    if (Array.isArray(res.providers)) appState.providers = res.providers;
-    appState.activeProvider = res.provider;
-    appState.activeModel = res.model;
-    renderProviderAndModels();
-    renderProviders();
-    showSuccess(`سرویس فعال: ${res.provider} (${res.model})`);
-  } catch (err) {
-    showError(err);
-  }
-});
-
-el.modelSelect.addEventListener('change', async () => {
-  try {
-    const model = el.modelSelect.value;
-    await callServerlessEndpoint('studio', { action: 'setModel', model });
-    appState.activeModel = model;
-    showSuccess(`مدل فعال: ${model}`);
-  } catch (err) {
-    showError(err);
-  }
-});
-
-el.btnSyncOpenCode.addEventListener('click', async () => {
-  try {
-    showToast('🔄 استعلام زنده از opencode.ai...');
-    const res = await callServerlessEndpoint('studio', { action: 'syncOpenCodeModels' });
-    const oc = appState.providers.find((p) => p.id === 'opencode');
-    if (oc && Array.isArray(res.models)) {
-      oc.models = res.models;
-    }
-    renderProviderAndModels();
-    renderProviders();
-    showSuccess(`${res.models.length} مدل رایگان OpenCode دریافت شد!`);
-  } catch (err) {
-    showError(err);
-  }
-});
-
-/*───────────────────────── Projects & files ──*/
 el.projectSelect?.addEventListener('change', async () => {
   try {
     const data = await callServerlessEndpoint('studio', {
@@ -682,16 +612,16 @@ el.btnNewProject?.addEventListener('click', async () => {
   }
 });
 
-el.btnCreateFile.addEventListener('click', () => {
+el.btnCreateFile?.addEventListener('click', () => {
   el.editorPath.value = 'src/new-file.js';
   el.editorContent.value = '';
   switchTab('editor');
 });
 
-el.btnRefresh.addEventListener('click', loadInitialState);
-el.btnRefreshFiles.addEventListener('click', loadInitialState);
+el.btnRefresh?.addEventListener('click', () => loadInitialState());
+el.btnRefreshFiles?.addEventListener('click', () => loadInitialState());
 
-el.btnSaveFile.addEventListener('click', async () => {
+el.btnSaveFile?.addEventListener('click', async () => {
   const path = el.editorPath.value.trim();
   if (!path) return showToast('مسیر فایل را وارد کنید');
   try {
@@ -707,7 +637,7 @@ el.btnSaveFile.addEventListener('click', async () => {
   }
 });
 
-el.btnDeleteFile.addEventListener('click', async () => {
+el.btnDeleteFile?.addEventListener('click', async () => {
   const path = el.editorPath.value.trim();
   if (!path) return;
   const confirmed = await confirmDialog(`آیا مطمئن هستید که فایل «${path}» حذف شود؟`);
@@ -734,8 +664,24 @@ el.btnExportZip?.addEventListener('click', async () => {
   }
 });
 
-/*───────────────────────── Agent prompt ──*/
-el.promptForm.addEventListener('submit', async (e) => {
+/*───────────────────────── Agent Prompt Execution ──*/
+function appendMessage(role, text, toolLogs = []) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+
+  if (toolLogs.length > 0) {
+    const toolsDiv = document.createElement('div');
+    toolsDiv.className = 'tool-pills';
+    toolsDiv.textContent = `🛠️ ابزارهای اجرا شده:\n${toolLogs.join('\n')}`;
+    div.appendChild(toolsDiv);
+  }
+
+  el.agentLog.appendChild(div);
+  el.agentLog.scrollTop = el.agentLog.scrollHeight;
+}
+
+el.promptForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const prompt = el.promptInput.value.trim();
   if (!prompt) return;
@@ -758,7 +704,7 @@ el.promptForm.addEventListener('submit', async (e) => {
       renderState({ activeProject: appState.activeProject, files: res.files });
     }
   } catch (err) {
-    showError(err);
+    showError(err, true);
   } finally {
     el.btnRunAgent.disabled = false;
     el.btnRunAgent.textContent = 'اجرا 🚀';
