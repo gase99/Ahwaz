@@ -2096,3 +2096,45 @@ a {
 body.tg-dark {
   background-color: var(--bg);
 }
+
+/* Active provider information in the chat */
+.chat-provider-wrap {
+  flex: 0 0 auto;
+  padding: 10px 12px 0;
+}
+.chat-provider-card {
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: rgba(17, 25, 42, 0.94);
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.chat-card-head, .chat-card-title, .chat-card-head-actions, .chat-card-row, .chat-card-download-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.chat-card-head { justify-content: space-between; }
+.chat-card-title { flex: 1; }
+.chat-card-names { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chat-card-name { font-weight: 800; font-size: 13px; overflow-wrap: anywhere; }
+.chat-card-model { color: var(--muted-2); font-size: 10px; overflow-wrap: anywhere; }
+.chat-card-divider { height: 1px; background: var(--border); margin: 10px 0; }
+.chat-card-row { align-items: baseline; flex-wrap: wrap; margin: 7px 0; }
+.chat-card-row-label { font-weight: 700; flex-shrink: 0; }
+.chat-card-row-value { min-width: 0; overflow-wrap: anywhere; }
+.chat-key-value { display: inline-block; font-family: var(--font-mono); color: var(--text-dim); }
+.chat-key-empty { color: var(--muted-2); }
+.chat-status-text.tone-ok { color: var(--ok); }
+.chat-status-text.tone-warn { color: var(--warn); }
+.chat-status-text.tone-err { color: var(--err); }
+.chat-status-text.tone-muted { color: var(--muted-2); }
+.chat-card-test-note { color: var(--muted-2); font-size: 10px; margin-top: 6px; }
+.chat-card-download-row { flex-wrap: wrap; }
+.chat-download-btn { white-space: normal; text-align: center; }
+@media (max-width: 380px) {
+  .chat-card-head { flex-wrap: wrap; }
+  .chat-card-head-actions { flex-shrink: 0; }
+  .chat-card-download-row .chat-download-btn { width: 100%; }
+}
