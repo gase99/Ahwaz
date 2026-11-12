@@ -1,0 +1,18 @@
+permissions:
+  id-token: write
+  contents: read
+
+steps:
+  - name: Sign in to OpenCode
+    env:
+      AUDIENCE: https://opencode.ai/console
+    run: |
+      oidc=$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+        "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)
+      token=$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+        -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+        -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+        -d client_id=sk_8f2b4eea-b24a-4ed1-a01a-314f8e52110e \
+        -d subject_token="$oidc" | jq -r .access_token)
+      echo "::add-mask::$token"
+      echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"concurrency: 
