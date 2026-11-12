@@ -1,5 +1,6 @@
 import { ActiveModelCard } from './components/ActiveModelCard.js';
 import { ApiKeysPanel } from './components/ApiKeysPanel.js';
+import { ChatProviderCard } from './components/ChatProviderCard.js';
 import { ConnectionsDashboard } from './components/ConnectionsDashboard.js';
 import { ModelSelector } from './components/ModelSelector.js';
 import { copyText, downloadJson, safeFileSlug } from './components/download.js';
@@ -21,6 +22,7 @@ const el = {
   btnManageAllKeys: document.getElementById('btnManageAllKeys'),
   keysSummaryBanner: document.getElementById('keysSummaryBanner'),
   activeModelCard: document.getElementById('activeModelCard'),
+  chatProviderCard: document.getElementById('chatProviderCard'),
   providersGrid: document.getElementById('providersGrid'),
   btnDownloadAllKeys: document.getElementById('btnDownloadAllKeys'),
   btnSyncAllProviders: document.getElementById('btnSyncAllProviders'),
@@ -401,6 +403,42 @@ const apiKeysPanel = new ApiKeysPanel({
   },
 });
 
+const chatProviderCard = new ChatProviderCard({
+  container: el.chatProviderCard,
+  onTestConnection: async (providerId) => {
+    try {
+      const res = await callServerlessEndpoint('test_key', { providerId });
+      if (Array.isArray(res.providers)) {
+        appState.providers = res.providers;
+      }
+      renderAllComponents();
+      if (res.success) {
+        showSuccess(`تست ${providerId} موفق (${res.latency_ms}ms)`);
+      } else {
+        const brief = parseProviderError(res.error);
+        showToast(
+          brief ? `⚠️ ${brief.titleFa} — ${brief.codeLabel}` : `⚠️ تست ${providerId} ناموفق`,
+          3200,
+        );
+      }
+    } catch (err) {
+      showError(err);
+    }
+  },
+  onDownloadPackage: (providerId, pkg) => {
+    downloadJson(`ahwaz-${safeFileSlug(providerId)}-config-package.json`, pkg);
+    showSuccess('پکیج فایل‌های کانفیگ دانلود شد');
+  },
+  onConfigure: (providerId) => {
+    switchTab('settings');
+    apiKeysPanel.focusProviderCard(providerId, true);
+  },
+  onCopyKey: (providerId) => {
+    const spec = appState.providers.find((p) => p.id === providerId);
+    if (spec?.maskedKey) copyToClipboard(spec.maskedKey, 'کلید ماسک‌شده');
+  },
+});
+
 const activeModelCard = new ActiveModelCard({
   container: el.activeModelCard,
   onConfigure: (providerId) => {
@@ -576,6 +614,12 @@ el.helpGrid?.addEventListener('click', (e) => {
 });
 
 function renderAllComponents() {
+  chatProviderCard.render({
+    providers: appState.providers,
+    activeProvider: appState.activeProvider,
+    activeModel: appState.activeModel,
+  });
+
   modelSelector.render({
     providers: appState.providers,
     activeProvider: appState.activeProvider,
